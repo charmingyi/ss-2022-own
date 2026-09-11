@@ -5,7 +5,7 @@
 首次公开推送已完成；后续发布请继续遵循：
 
 1. 不覆盖上游 `jinqians/ss-2022.sh`，每次发布使用新的、可审计的提交/tag。
-2. 推送前运行 `make test`、`git diff --check`、`python3 -m py_compile lib/ssctl.py` 和 `bash -n *.sh`。
+2. 推送前运行 `make test`、`git diff --check`、`jq --version` 和 `bash -n *.sh`。
 3. 确认 `.gitignore` 没有失效，尤其不能提交 `dist/`、`.build/`、状态文件、客户端配置和任何私钥/密码。
 4. 公开仓库只包含管理层源码、构建脚本、README、NOTICE、SECURITY、补丁和测试；不要把服务器实例配置放进仓库。
 5. 一键入口应固定到已审计的完整提交号，而不是长期依赖 `main`。

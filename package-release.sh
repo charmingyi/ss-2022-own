@@ -13,7 +13,7 @@ DIST_ROOT=${SSOWN_DIST_ROOT:-"${SCRIPT_DIR}/dist"}
 OUT_ROOT=${SSOWN_RELEASE_ROOT:-"${SCRIPT_DIR}/release"}
 
 fatal() { printf '[release][error] %s\n' "$*" >&2; exit 1; }
-for command in python3 sha256sum tar gzip file readelf; do
+for command in jq sha256sum tar gzip file readelf; do
     command -v "$command" >/dev/null 2>&1 || fatal "缺少命令：$command"
 done
 case "$ARCH" in amd64) ;; *) fatal '当前发布脚本只打包 amd64；设置 SSOWN_RELEASE_ARCH=amd64。' ;; esac
@@ -36,36 +36,16 @@ chmod 700 "$OUT_ROOT" "$stage_root"
 install -m 0755 "$ss_binary" "$stage_dir/ssserver"
 install -m 0755 "$xray_binary" "$stage_dir/xray"
 
-python3 - "$build_manifest" "$stage_dir/manifest.json" "$RELEASE_TAG" "$ARCH" "$LIBC" <<'PY'
-import hashlib
-import json
-import pathlib
-import sys
-
-source_path, output_path, release_tag, arch, libc = sys.argv[1:]
-source = json.loads(pathlib.Path(source_path).read_text(encoding='utf-8'))
-root = pathlib.Path(output_path).parent
-
-def digest(path):
-    h = hashlib.sha256()
-    with path.open('rb') as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b''):
-            h.update(block)
-    return h.hexdigest()
-
-manifest = {
-    'project': 'ss-2022-own',
-    'release': release_tag,
-    'target': {'os': 'linux', 'arch': arch, 'libc': libc},
-    'source': source['source'],
-    'toolchain': source['toolchain'],
-    'artifacts': {
-        'ssserver': {'file': 'ssserver', 'sha256': digest(root / 'ssserver')},
-        'xray': {'file': 'xray', 'sha256': digest(root / 'xray')},
-    },
-}
-pathlib.Path(output_path).write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-PY
+ss_hash=$(sha256sum "$stage_dir/ssserver" | awk '{print $1}')
+xray_hash=$(sha256sum "$stage_dir/xray" | awk '{print $1}')
+manifest_tmp="$stage_dir/.manifest.json.new.$$"
+jq -n --slurpfile source "$build_manifest" \
+    --arg release "$RELEASE_TAG" --arg arch "$ARCH" --arg libc "$LIBC" \
+    --arg ss_hash "$ss_hash" --arg xray_hash "$xray_hash" \
+    '{project:"ss-2022-own",release:$release,target:{os:"linux",arch:$arch,libc:$libc},source:$source[0].source,toolchain:$source[0].toolchain,artifacts:{ssserver:{file:"ssserver",sha256:$ss_hash},xray:{file:"xray",sha256:$xray_hash}}}' \
+    > "$manifest_tmp"
+chmod 0644 "$manifest_tmp"
+mv -f -- "$manifest_tmp" "$stage_dir/manifest.json"
 
 sha256sum "$stage_dir/ssserver" "$stage_dir/xray" > "$stage_dir/SHA256SUMS"
 chmod 0644 "$stage_dir/manifest.json" "$stage_dir/SHA256SUMS"

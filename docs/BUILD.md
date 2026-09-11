@@ -26,7 +26,7 @@ Xray-core v25.9.11
 
 ```bash
 apt-get install --no-install-recommends \
-  build-essential binutils ca-certificates curl file git python3 \
+  build-essential binutils ca-certificates curl file jq patch \
   musl-tools pkg-config tar xz-utils
 ```
 

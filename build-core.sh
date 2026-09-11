@@ -20,6 +20,7 @@ SS_COMMIT="7ee1aa9223ed8f4d34734aac919036c8ad4502c2"
 SS_ARCHIVE_SHA256="a89865d1c5203de1b732017dd032e85f943d1592e8d3152eb7d2c4f3fca387bf"
 SS_SOURCE_URL="https://codeload.github.com/shadowsocks/shadowsocks-rust/tar.gz/refs/tags/v${SS_VERSION}"
 SS_SOURCE_DATE_EPOCH="1765409939"
+SS_BUILD_TIME="2025-12-10T23:38:59.000000000+00:00"
 SS_PATCH_FILE="${SCRIPT_DIR}/patches/shadowsocks-rust-build-time.patch"
 SS_PATCH_SHA256="9a9b9c6720429c0d3809eacd6b226ed167b49cdacd9392ae5d32acf3115d2792"
 
@@ -111,7 +112,7 @@ esac
 require_command() {
     command -v "$1" >/dev/null 2>&1 || fatal "缺少命令 $1；请按 docs/BUILD.md 安装构建依赖。"
 }
-for command in curl sha256sum tar python3 file readelf; do require_command "$command"; done
+for command in curl sha256sum tar jq file readelf; do require_command "$command"; done
 
 version_at_least() {
     local actual=$1 minimum=$2
@@ -154,26 +155,16 @@ mkdir -p "$SOURCE_ROOT" "$DIST_ROOT"
 chmod 700 "$BUILD_ROOT" "$SOURCE_ROOT" "$DIST_ROOT"
 
 validate_archive() {
-    local archive=$1
-    python3 - "$archive" <<'PY'
-import posixpath
-import sys
-import tarfile
-
-archive = sys.argv[1]
-with tarfile.open(archive, "r:gz") as tf:
-    for member in tf.getmembers():
-        name = member.name
-        if name.startswith("/") or "\\x00" in name:
-            raise SystemExit(f"拒绝不安全归档成员: {name!r}")
-        normalized = posixpath.normpath(name)
-        if normalized == ".." or normalized.startswith("../"):
-            raise SystemExit(f"拒绝路径穿越归档成员: {name!r}")
-        if member.issym() or member.islnk():
-            # Source archives are expected to be regular source trees here.
-            # Symlinks would make the extraction target ambiguous.
-            raise SystemExit(f"拒绝归档中的链接成员: {name!r}")
-PY
+    local archive=$1 entries bad_types entry
+    entries=$(tar -tzf "$archive") || fatal "无法读取源归档：$archive"
+    [[ -n "$entries" ]] || fatal "源归档为空：$archive"
+    while IFS= read -r entry; do
+        case "$entry" in
+            /*|../*|*/../*|*/..|..|*\\\\*) fatal "拒绝不安全归档成员：$entry" ;;
+        esac
+    done <<< "$entries"
+    bad_types=$(tar -tvzf "$archive" | awk '{t=substr($1,1,1); if (t=="l" || t=="h" || t=="b" || t=="c" || t=="p" || t=="s") print $1}' || true)
+    [[ -z "$bad_types" ]] || fatal "拒绝归档中的链接或特殊文件：$archive"
 }
 
 fetch_source() {
@@ -231,12 +222,7 @@ build_ss() {
     pushd "$source_dir" >/dev/null
     patch --forward --batch --fuzz=0 -p1 < "$SS_PATCH_FILE" >/dev/null
     export SOURCE_DATE_EPOCH="$SS_SOURCE_DATE_EPOCH"
-    ss_build_time=$(python3 - "$SS_SOURCE_DATE_EPOCH" <<'PY'
-import datetime
-import sys
-print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000000000+00:00'))
-PY
-)
+    ss_build_time="$SS_BUILD_TIME"
     export SSOWN_BUILD_TIME="$ss_build_time"
     export CARGO_TERM_COLOR=never
     cargo_home_for_remap=${CARGO_HOME:-${HOME}/.cargo}
@@ -295,60 +281,28 @@ XRAY_OUTPUT=""
 [[ "$CORE" == xray || "$CORE" == all ]] && build_xray
 
 manifest="${DIST_ROOT}/manifest-${ARCH}-${LIBC}.json"
-python3 - "$manifest" "$SS_OUTPUT" "$XRAY_OUTPUT" <<PY
-import hashlib
-import json
-import os
-import pathlib
-import sys
-
-manifest_path = pathlib.Path(sys.argv[1])
-ss_path = pathlib.Path(sys.argv[2]) if sys.argv[2] else None
-xray_path = pathlib.Path(sys.argv[3]) if sys.argv[3] else None
-
-def digest(path):
-    if not path:
-        return None
-    h = hashlib.sha256()
-    with path.open('rb') as f:
-        for block in iter(lambda: f.read(1024 * 1024), b''):
-            h.update(block)
-    return h.hexdigest()
-
-manifest = {
-    'project': 'ss-2022-own',
-    'source': {
-        'shadowsocks-rust': {
-            'version': '${SS_VERSION}',
-            'commit': '${SS_COMMIT}',
-            'archive_sha256': '${SS_ARCHIVE_SHA256}',
-            'source_date_epoch': int('${SS_SOURCE_DATE_EPOCH}'),
-            'reproducibility_patch': {
-                'file': 'patches/shadowsocks-rust-build-time.patch',
-                'sha256': '${ss_patch_actual}',
-                'build_time': '${ss_build_time}',
-            },
-        },
-        'xray-core': {
-            'version': '${XRAY_VERSION}',
-            'commit': '${XRAY_COMMIT}',
-            'archive_sha256': '${XRAY_ARCHIVE_SHA256}',
-            'source_date_epoch': int('${XRAY_SOURCE_DATE_EPOCH}'),
-        },
-    },
-    'target': {'arch': '${ARCH}', 'libc': '${LIBC}', 'xray_cgo': 0},
-    'toolchain': {
-        'rustc': '${rust_toolchain_version}',
-        'go': '${go_toolchain_version}',
-    },
-    'artifacts': {
-        'ssserver': {'path': str(ss_path) if ss_path else None, 'sha256': digest(ss_path)},
-        'xray': {'path': str(xray_path) if xray_path else None, 'sha256': digest(xray_path)},
-    },
-}
-manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\\n', encoding='utf-8')
-os.chmod(manifest_path, 0o600)
-PY
+ss_artifact='{"path":null,"sha256":null}'
+xray_artifact='{"path":null,"sha256":null}'
+if [[ -n "$SS_OUTPUT" ]]; then
+    ss_hash=$(sha256sum "$SS_OUTPUT" | awk '{print $1}')
+    ss_artifact=$(jq -cn --arg path "$SS_OUTPUT" --arg hash "$ss_hash" '{path:$path,sha256:$hash}')
+fi
+if [[ -n "$XRAY_OUTPUT" ]]; then
+    xray_hash=$(sha256sum "$XRAY_OUTPUT" | awk '{print $1}')
+    xray_artifact=$(jq -cn --arg path "$XRAY_OUTPUT" --arg hash "$xray_hash" '{path:$path,sha256:$hash}')
+fi
+manifest_tmp="${manifest}.new.$$"
+jq -n \
+    --arg ss_version "$SS_VERSION" --arg ss_commit "$SS_COMMIT" --arg ss_archive "$SS_ARCHIVE_SHA256" \
+    --arg ss_patch "$ss_patch_actual" --arg ss_build_time "$ss_build_time" --arg xray_version "$XRAY_VERSION" \
+    --arg xray_commit "$XRAY_COMMIT" --arg xray_archive "$XRAY_ARCHIVE_SHA256" \
+    --arg arch "$ARCH" --arg libc "$LIBC" --arg rust "$rust_toolchain_version" --arg go "$go_toolchain_version" \
+    --argjson ss_epoch "$SS_SOURCE_DATE_EPOCH" --argjson xray_epoch "$XRAY_SOURCE_DATE_EPOCH" \
+    --argjson ss_artifact "$ss_artifact" --argjson xray_artifact "$xray_artifact" \
+    '{project:"ss-2022-own",source:{"shadowsocks-rust":{version:$ss_version,commit:$ss_commit,archive_sha256:$ss_archive,source_date_epoch:$ss_epoch,reproducibility_patch:{file:"patches/shadowsocks-rust-build-time.patch",sha256:$ss_patch,build_time:$ss_build_time}},"xray-core":{version:$xray_version,commit:$xray_commit,archive_sha256:$xray_archive,source_date_epoch:$xray_epoch}},target:{arch:$arch,libc:$libc,xray_cgo:0},toolchain:{rustc:$rust,go:$go},artifacts:{ssserver:$ss_artifact,xray:$xray_artifact}}' \
+    > "$manifest_tmp"
+chmod 0600 "$manifest_tmp"
+mv -f -- "$manifest_tmp" "$manifest"
 
 log "完成。产物清单：${manifest}"
 [[ -n "$SS_OUTPUT" ]] && log "SS: $SS_OUTPUT"

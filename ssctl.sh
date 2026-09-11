@@ -2,9 +2,9 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-if ! command -v python3 >/dev/null 2>&1; then
-    printf '%s\n' '[错误] 需要 python3；本项目不会自动执行远程安装脚本。' >&2
+if [[ ! -f "${SCRIPT_DIR}/lib/ssctl.sh" ]]; then
+    printf '%s\n' '[错误] 找不到 Bash 管理后端 lib/ssctl.sh。' >&2
     exit 1
 fi
 
-exec python3 "${SCRIPT_DIR}/lib/ssctl.py" "$@"
+exec bash "${SCRIPT_DIR}/lib/ssctl.sh" "$@"

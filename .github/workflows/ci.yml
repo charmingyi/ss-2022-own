@@ -16,8 +16,8 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Shell syntax
         run: bash -n ssctl.sh bootstrap.sh menu.sh ss-2022.sh build-core.sh package-release.sh tests/test_manager.sh tests/test_menu.sh
-      - name: Python syntax
-        run: python3 -m py_compile lib/ssctl.py
+      - name: jq availability
+        run: jq --version
       - name: Manager tests
         run: tests/test_manager.sh
       - name: Diff check

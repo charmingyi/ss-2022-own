@@ -10,9 +10,9 @@ export SSOWN_NO_SYSTEMD=1
 
 output=$(printf '0\n' | "$PROJECT_DIR/ssctl.sh" menu)
 for expected in \
-  '安装/覆盖 Shadowsocks 2022' \
-  '安装/覆盖 VLESS Reality' \
-  '安装/覆盖 VLESS Encryption' \
+  'Shadowsocks 2022 安装管理' \
+  'VLESS Reality 安装管理' \
+  'VLESS Encryption 安装管理' \
   '节点管理（查看/删除）' \
   '服务管理（启停/重启）' \
   '防火墙管理（显式操作）' \

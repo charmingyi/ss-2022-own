@@ -39,7 +39,7 @@ Xray v25.9.11 已包含 [VLESS Encryption PR #5067](https://github.com/XTLS/Xray
 
 ## 预编译一键安装
 
-当前公开 Release 提供 Linux amd64/glibc 与 amd64/musl 预编译核心，安装服务器不需要 Go、Rust 或 Git：Debian/Ubuntu 选择 glibc，Alpine 会自动选择 musl。只需 Bash、curl、Python3 和 sha256sum。
+当前公开 Release 提供 Linux amd64/glibc 与 amd64/musl 预编译核心，安装服务器不需要 Go、Rust、Git 或 Python：Debian/Ubuntu 选择 glibc，Alpine 会自动选择 musl。只需 Bash、curl、jq 和 sha256sum。
 
 ```bash
 curl --fail --proto '=https' --tlsv1.2 -fsSL \

@@ -22,7 +22,7 @@ REMOTE_REF=${SSOWN_REF:-main}
 }
 REMOTE_BASE=${SSOWN_RAW_BASE:-https://raw.githubusercontent.com/charmingyi/ss-2022-own/${REMOTE_REF}}
 
-if [[ -f "$SCRIPT_DIR/ssctl.sh" && -f "$SCRIPT_DIR/lib/ssctl.py" ]]; then
+if [[ -f "$SCRIPT_DIR/ssctl.sh" && -f "$SCRIPT_DIR/lib/ssctl.sh" ]]; then
     exec "$SCRIPT_DIR/ssctl.sh" menu --section ss "$@"
 fi
 

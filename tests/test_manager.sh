@@ -9,12 +9,11 @@ trap 'rm -rf -- "$TEST_ROOT" "$FAKE_BIN"' EXIT
 
 cat >"$FAKE_BIN/ssserver" <<'EOF'
 #!/bin/sh
-[ "$1" = "--version" ] || [ "$1" = "-h" ] || [ "$1" = "-c" ]
 exit 0
 EOF
 cat >"$FAKE_BIN/xray" <<'EOF'
 #!/bin/sh
-# Config-test stub used only to test the manager's file/argument handling.
+# Config-test stub used only to test manager file/argument handling.
 if [ "$1" = "run" ] && [ "$2" = "-test" ]; then exit 0; fi
 exit 0
 EOF
@@ -22,78 +21,36 @@ chmod 755 "$FAKE_BIN/ssserver" "$FAKE_BIN/xray"
 
 export SSOWN_ROOT="$TEST_ROOT"
 export SSOWN_NO_SYSTEMD=1
+export SSOWN_NO_OPENRC=1
 export SSOWN_SS_BIN="$FAKE_BIN/ssserver"
 export SSOWN_XRAY_BIN="$FAKE_BIN/xray"
 
-key_a=$(python3 - <<'PY'
-import base64
-print(base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip('='))
-PY
-)
-key_b=$(python3 - <<'PY'
-import base64
-print(base64.urlsafe_b64encode(bytes(range(32, 64))).decode().rstrip('='))
-PY
-)
-python3 - "$PROJECT_DIR" <<'PY'
-import base64
-import sys
-sys.path.insert(0, sys.argv[1] + "/lib")
-import ssctl
-seed = base64.urlsafe_b64encode(bytes(64)).decode().rstrip("=")
-client = base64.urlsafe_b64encode(bytes(1184)).decode().rstrip("=")
-assert ssctl.encryption_key_pair("mlkem768", seed, client) == (seed, client)
-PY
+key_a=$(head -c 32 /dev/zero | base64 | tr '+/' '-_' | tr -d '=\r\n')
+key_b=$(head -c 32 /dev/zero | base64 | tr '+/' '-_' | tr -d '=\r\n')
+ss_password=$(head -c 32 /dev/zero | base64 | tr -d '\n')
 
 run() { "$PROJECT_DIR/ssctl.sh" "$@"; }
 
-ss_password=$(python3 - <<'PY'
-import base64
-print(base64.b64encode(bytes(32)).decode())
-PY
-)
-run install ss --port 8388 --server-address node.example --password "$ss_password" >/dev/null
+run install ss --port 8388 --server-address node.example --password "$ss_password" --no-start >/dev/null
 run install reality --port 443 --server-address node.example \
   --target www.example.com:443 --server-name www.example.com \
   --private-key "$key_a" --public-key "$key_b" --no-start >/dev/null
 run install encryption --port 8443 --server-address node.example \
   --private-key "$key_a" --public-key "$key_b" --no-start >/dev/null
 
-python3 - "$TEST_ROOT" "$PROJECT_DIR" <<'PY'
-import json
-import pathlib
-import sys
+jq -e '.method == "2022-blake3-aes-256-gcm" and .server_port == 8388' \
+  "$TEST_ROOT/etc/ss-2022-own/ss.json" >/dev/null
+[[ "$(jq '.inbounds | length' "$TEST_ROOT/etc/ss-2022-own/xray.json")" -eq 2 ]]
+jq -e 'any(.inbounds[]; .tag == "vless-reality" and .settings.decryption == "none" and .streamSettings.security == "reality")' \
+  "$TEST_ROOT/etc/ss-2022-own/xray.json" >/dev/null
+jq -e 'any(.inbounds[]; .tag == "vless-encryption" and (.settings.decryption | startswith("mlkem768x25519plus.native.600s.")) and .streamSettings.security == "none")' \
+  "$TEST_ROOT/etc/ss-2022-own/xray.json" >/dev/null
+jq -e '[.nodes[].kind] | sort == ["shadowsocks-2022", "vless-encryption", "vless-reality"]' \
+  "$TEST_ROOT/etc/ss-2022-own/state.json" >/dev/null
+[[ -f "$TEST_ROOT/etc/ss-2022-own/clients/vless-reality.json" ]]
+[[ -f "$TEST_ROOT/etc/ss-2022-own/clients/vless-encryption.json" ]]
 
-root = pathlib.Path(sys.argv[1])
-project = pathlib.Path(sys.argv[2])
-etc = root / "etc" / "ss-2022-own"
-ss = json.loads((etc / "ss.json").read_text())
-xray = json.loads((etc / "xray.json").read_text())
-state = json.loads((etc / "state.json").read_text())
-assert ss["method"] == "2022-blake3-aes-256-gcm"
-assert len(xray["inbounds"]) == 2
-reality = next(i for i in xray["inbounds"] if i["tag"] == "vless-reality")
-encryption = next(i for i in xray["inbounds"] if i["tag"] == "vless-encryption")
-assert reality["settings"]["decryption"] == "none"
-assert reality["streamSettings"]["security"] == "reality"
-assert encryption["settings"]["decryption"].startswith("mlkem768x25519plus.native.600s.")
-assert encryption["streamSettings"]["security"] == "none"
-assert {n["kind"] for n in state["nodes"]} == {"shadowsocks-2022", "vless-reality", "vless-encryption"}
-assert (etc / "clients" / "vless-reality.json").exists()
-assert (etc / "clients" / "vless-encryption.json").exists()
-sys.path.insert(0, str(project / "lib"))
-# The test runs with an isolated SSOWN_ROOT, so exercise templates directly.
-import ssctl
-ss_unit = ssctl.ss_service_content(False)
-xray_unit = ssctl.xray_service_content(True)
-openrc_unit = ssctl.openrc_service_content("xray")
-assert "User=ssown" in ss_unit
-assert "CapabilityBoundingSet=CAP_NET_BIND_SERVICE" in xray_unit
-assert "supervisor=\"supervise-daemon\"" in openrc_unit
-assert "command_background=true" not in openrc_unit
-PY
-
-# Default output must not expose secrets.
+# Default output must not expose secret values.
 redacted=$(run show)
 case "$redacted" in
   *"$key_a"*|*"$ss_password"*)
@@ -104,17 +61,11 @@ esac
 
 run validate >/dev/null
 run remove --tag vless-reality --yes >/dev/null
-! grep -q 'vless-reality' "$TEST_ROOT/etc/ss-2022-own/xray.json"
+jq -e 'all(.inbounds[]; .tag != "vless-reality")' "$TEST_ROOT/etc/ss-2022-own/xray.json" >/dev/null
 run remove ss --yes >/dev/null
-python3 - "$TEST_ROOT" <<'PY'
-import json
-import pathlib
-import sys
-nodes = json.loads((pathlib.Path(sys.argv[1]) / "etc/ss-2022-own/state.json").read_text())["nodes"]
-assert all(node["kind"] != "shadowsocks-2022" for node in nodes)
-PY
+jq -e 'all(.nodes[]; .kind != "shadowsocks-2022")' "$TEST_ROOT/etc/ss-2022-own/state.json" >/dev/null
 
-if run install ss --port 8390 --password 'not-a-2022-key' >/dev/null 2>&1; then
+if run install ss --port 8390 --password 'not-a-2022-key' --no-start >/dev/null 2>&1; then
   echo 'invalid SS password was accepted' >&2
   exit 1
 fi

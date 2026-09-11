@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shell menu facade modeled after the upstream one-click/menu UX.
-# The backend remains our local ssctl.py; no third-party menu is executed.
+# The backend remains our local Bash+jq manager; no third-party menu is executed.
 set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
@@ -23,7 +23,7 @@ REMOTE_REF=${SSOWN_REF:-main}
 }
 REPO_RAW_BASE=${SSOWN_RAW_BASE:-https://raw.githubusercontent.com/charmingyi/ss-2022-own/${REMOTE_REF}}
 
-if [[ ! -f "$SCRIPT_DIR/ssctl.sh" || ! -f "$SCRIPT_DIR/lib/ssctl.py" ]]; then
+if [[ ! -f "$SCRIPT_DIR/ssctl.sh" || ! -f "$SCRIPT_DIR/lib/ssctl.sh" ]]; then
     command -v curl >/dev/null 2>&1 || { printf '%s\n' '[错误] 远程一键模式需要 curl。' >&2; exit 1; }
     # A streamed menu has no local backend. Bootstrap installs the verified
     # precompiled core and then re-enters this local menu facade.

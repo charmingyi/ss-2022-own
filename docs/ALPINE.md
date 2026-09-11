@@ -5,7 +5,7 @@
 ## 一键入口
 
 ```sh
-apk add --no-cache bash python3 curl libcap
+apk add --no-cache bash curl jq libcap
 curl --fail --proto '=https' --tlsv1.2 -fsSL \
   https://raw.githubusercontent.com/charmingyi/ss-2022-own/main/bootstrap.sh \
   | SSOWN_REF=<已审计提交号> bash

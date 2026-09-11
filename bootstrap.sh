@@ -17,11 +17,11 @@ RELEASE_SHA256_AMD64_MUSL="20dc8536307cb5e825e50f279807d1820876960707a73db8ca29d
 
 # Hashes of the small, reviewed manager surface fetched from this exact REF.
 # The binary Release is checked separately above and never comes from main.
-SOURCE_SHA256_SSCTL="507d2a924f36a22f66d85a97dc52c3d4eb3f0ff1572b126d5a166dbb0d87b9ff"
-SOURCE_SHA256_MENU="5a69d980b30235a483d11af5c0de918d1bbdd8c92a9c43cdef984de636355ca9"
-SOURCE_SHA256_SS2022="23db0a29c71235ba9d44f45303ff506c325aed0c40cb1c3c8deb7d67d1ed94ea"
-SOURCE_SHA256_PY="896ee400603ddf892488dce7d0c2502c0f5a9c48a7066ab1acd4937c69714711"
-SOURCE_SHA256_BUILD="8d84dd0207b84bce833333589287618ca271ee5a0df90007e76811f8874572da"
+SOURCE_SHA256_SSCTL="0a9efae38684ff943ef2257d198ac2c42ec2b02fa30eef0559266e7aad7fde15"
+SOURCE_SHA256_MENU="1d77871d05af7b526548ea72ae129045725578c047d893a0294ba78790b27227"
+SOURCE_SHA256_SS2022="846a7ff307470e8b7abe63219c42e63dc6f0d240e7d7803fa7a9a11ccf4f14de"
+SOURCE_SHA256_BACKEND="1bc4493c7bf2181446c1b24c3982539d4ea4a64a5bf03bdf04cce9090e2a0926"
+SOURCE_SHA256_BUILD="388e092c620fb66ff2550e4e73aea45fd57c1a8d01ae47ff76f5ecd5f4689d45"
 SOURCE_SHA256_PATCH="9a9b9c6720429c0d3809eacd6b226ed167b49cdacd9392ae5d32acf3115d2792"
 RUN_MENU=1
 MODE=release
@@ -89,7 +89,7 @@ if [[ "$MODE" == release ]]; then
     }
 fi
 
-for command in curl sha256sum python3; do
+for command in curl sha256sum tar jq; do
     command -v "$command" >/dev/null 2>&1 || { printf '[错误] 预编译/管理器安装需要 %s。\n' "$command" >&2; exit 1; }
 done
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -119,8 +119,8 @@ fetch_checked_file menu.sh "$SOURCE_SHA256_MENU"
 menu_file="$FETCHED_FILE"
 fetch_checked_file ss-2022.sh "$SOURCE_SHA256_SS2022"
 ss2022_file="$FETCHED_FILE"
-fetch_checked_file lib/ssctl.py "$SOURCE_SHA256_PY"
-python_file="$FETCHED_FILE"
+fetch_checked_file lib/ssctl.sh "$SOURCE_SHA256_BACKEND"
+backend_file="$FETCHED_FILE"
 fetch_checked_file build-core.sh "$SOURCE_SHA256_BUILD"
 build_file="$FETCHED_FILE"
 fetch_checked_file patches/shadowsocks-rust-build-time.patch "$SOURCE_SHA256_PATCH"
@@ -133,7 +133,7 @@ install -m 0755 "$menu_file" "$INSTALL_DIR/menu.sh"
 install -m 0755 "$ss2022_file" "$INSTALL_DIR/ss-2022.sh"
 install -m 0755 "$build_file" "$INSTALL_DIR/build-core.sh"
 install -d -m 0755 "$INSTALL_DIR/lib" "$INSTALL_DIR/patches"
-install -m 0644 "$python_file" "$INSTALL_DIR/lib/ssctl.py"
+install -m 0755 "$backend_file" "$INSTALL_DIR/lib/ssctl.sh"
 install -m 0644 "$patch_file" "$INSTALL_DIR/patches/shadowsocks-rust-build-time.patch"
 
 if [[ "$MODE" == release ]]; then
@@ -148,61 +148,53 @@ if [[ "$MODE" == release ]]; then
     curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
         --retry 3 --connect-timeout 15 --max-time 600 "$release_url" -o "$archive"
     printf '%s  %s\n' "$release_sha" "$archive" | sha256sum -c -
-    package_root=$(python3 - "$archive" "$TMP_DIR/package" "$release_arch" "$runtime_libc" <<'PY'
-import hashlib
-import json
-import pathlib
-import posixpath
-import sys
-import tarfile
-
-archive, destination, expected_arch, expected_libc = sys.argv[1:]
-destination = pathlib.Path(destination)
-destination.mkdir(mode=0o700)
-with tarfile.open(archive, "r:gz") as tf:
-    members = tf.getmembers()
-    top_levels = set()
-    for member in members:
-        name = member.name
-        if name.startswith("/") or "\x00" in name:
-            raise SystemExit(f"拒绝不安全归档成员: {name!r}")
-        normalized = posixpath.normpath(name)
-        if normalized == ".." or normalized.startswith("../"):
-            raise SystemExit(f"拒绝路径穿越归档成员: {name!r}")
-        if member.issym() or member.islnk() or not (member.isdir() or member.isreg()):
-            raise SystemExit(f"拒绝归档链接或特殊文件: {name!r}")
-        top_levels.add(normalized.split("/", 1)[0])
-    if len(top_levels) != 1:
-        raise SystemExit("归档必须只有一个顶层目录")
-    tf.extractall(destination)
-
-root = destination / next(iter(top_levels))
-required = {"ssserver", "xray", "manifest.json", "SHA256SUMS"}
-if {p.name for p in root.iterdir()} < required:
-    raise SystemExit("Release 归档缺少核心或清单文件")
-for name in required:
-    path = root / name
-    if path.is_symlink() or not path.is_file():
-        raise SystemExit(f"拒绝非普通 Release 文件: {path}")
-
-manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
-if manifest.get("project") != "ss-2022-own" or manifest.get("target", {}).get("arch") != expected_arch:
-    raise SystemExit("Release manifest 项目或架构不匹配")
-if manifest.get("target", {}).get("libc") != expected_libc:
-    raise SystemExit("Release manifest libc 不匹配")
-
-checks = {}
-for line in (root / "SHA256SUMS").read_text(encoding="ascii").splitlines():
-    digest, name = line.split(None, 1)
-    checks[name.lstrip("*")] = digest
-for name in ("ssserver", "xray"):
-    h = hashlib.sha256((root / name).read_bytes()).hexdigest()
-    if checks.get(name) != h or manifest["artifacts"][name]["sha256"] != h:
-        raise SystemExit(f"Release 内部哈希不匹配: {name}")
-    (root / name).chmod(0o755)
-print(root)
-PY
-)
+    package_parent="$TMP_DIR/package"
+    package_root="$package_parent"
+    mkdir -m 0700 -p "$package_parent"
+    archive_entries=$(tar -tzf "$archive") || { printf '%s\n' '[错误] Release 归档无法读取。' >&2; exit 1; }
+    [[ -n "$archive_entries" ]] || { printf '%s\n' '[错误] Release 归档为空。' >&2; exit 1; }
+    while IFS= read -r entry; do
+        case "$entry" in
+            /*|../*|*/../*|*/..|..|*\\\\*)
+                printf '[错误] 拒绝不安全归档成员：%s\n' "$entry" >&2
+                exit 1
+                ;;
+        esac
+    done <<< "$archive_entries"
+    bad_types=$(tar -tvzf "$archive" | awk '{t=substr($1,1,1); if (t=="l" || t=="h" || t=="b" || t=="c" || t=="p" || t=="s") print $1}' || true)
+    [[ -z "$bad_types" ]] || { printf '%s\n' '[错误] Release 归档含有链接或特殊文件。' >&2; exit 1; }
+    top_levels=$(printf '%s\n' "$archive_entries" | awk -F/ 'NF {print $1}' | sort -u)
+    [[ "$(printf '%s\n' "$top_levels" | awk 'NF {n++} END {print n+0}')" -eq 1 ]] || {
+        printf '%s\n' '[错误] Release 归档必须只有一个顶层目录。' >&2
+        exit 1
+    }
+    top_level=$(printf '%s\n' "$top_levels" | awk 'NF {print; exit}')
+    tar -xzf "$archive" -C "$package_parent" --no-same-owner --no-same-permissions
+    package_root="$package_parent/$top_level"
+    for required in ssserver xray manifest.json SHA256SUMS; do
+        [[ -f "$package_root/$required" && ! -L "$package_root/$required" ]] || {
+            printf '[错误] Release 缺少或拒绝文件：%s\n' "$required" >&2
+            exit 1
+        }
+    done
+    jq -e --arg arch "$release_arch" --arg libc "$runtime_libc" \
+        '.project == "ss-2022-own" and .target.os == "linux" and .target.arch == $arch and .target.libc == $libc and .artifacts.ssserver.file == "ssserver" and .artifacts.xray.file == "xray"' \
+        "$package_root/manifest.json" >/dev/null || {
+        printf '%s\n' '[错误] Release manifest 项目/架构/libc 不匹配。' >&2
+        exit 1
+    }
+    (cd "$package_root" && sha256sum -c SHA256SUMS >/dev/null) || {
+        printf '%s\n' '[错误] Release 内部 SHA256SUMS 校验失败。' >&2
+        exit 1
+    }
+    actual_ss=$(sha256sum "$package_root/ssserver" | awk '{print $1}')
+    actual_xray=$(sha256sum "$package_root/xray" | awk '{print $1}')
+    [[ "$actual_ss" == "$(jq -r '.artifacts.ssserver.sha256' "$package_root/manifest.json")" && \
+       "$actual_xray" == "$(jq -r '.artifacts.xray.sha256' "$package_root/manifest.json")" ]] || {
+        printf '%s\n' '[错误] Release manifest 核心哈希不匹配。' >&2
+        exit 1
+    }
+    chmod 755 "$package_root/ssserver" "$package_root/xray"
     "$INSTALL_DIR/ssctl.sh" deploy --ss "$package_root/ssserver" --xray "$package_root/xray"
     printf '%s\n' '[bootstrap] 预编译核心已校验并部署；未在服务器编译。'
 else
