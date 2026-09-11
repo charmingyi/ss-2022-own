@@ -1121,8 +1121,8 @@ cmd_core_info() {
         printf 'Xray 版本：未部署\n'
     fi
     printf '预编译 Release：v0.1.0 amd64/glibc + amd64/musl\n'
-    printf 'glibc SHA-256：6ee27771389b8bafc31329671ff0bd705fb47fd0cce33930ca211a077a9f5d21\n'
-    printf 'musl SHA-256：20dc8536307cb5e825e50f279807d1820876960707a73db8ca29decdf4ee8ca8\n'
+    printf 'glibc SHA-256：ea19d8faee337cfc4bdb78c9c0527dddb16f03d7760792b98a5124c56c92a48b\n'
+    printf 'musl SHA-256：93e2cab2d2eb643f014ec503939da2cfd16eed2941a4f7f6ddf983ffe277a458\n'
 }
 
 cmd_logs() {

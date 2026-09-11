@@ -47,7 +47,7 @@ jq -n --slurpfile source "$build_manifest" \
 chmod 0644 "$manifest_tmp"
 mv -f -- "$manifest_tmp" "$stage_dir/manifest.json"
 
-sha256sum "$stage_dir/ssserver" "$stage_dir/xray" > "$stage_dir/SHA256SUMS"
+(cd "$stage_dir" && sha256sum ssserver xray > SHA256SUMS)
 chmod 0644 "$stage_dir/manifest.json" "$stage_dir/SHA256SUMS"
 # Normalize order, ownership and timestamps; gzip -n removes its timestamp.
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \

@@ -47,7 +47,7 @@ curl --fail --proto '=https' --tlsv1.2 -fsSL \
   | SSOWN_REF=main bash
 ```
 
-入口会固定下载 Release `v0.1.0`，校验归档 SHA-256、归档内部 manifest 和核心哈希后才部署。glibc 归档 SHA-256 为 `6ee27771389b8bafc31329671ff0bd705fb47fd0cce33930ca211a077a9f5d21`，musl 归档 SHA-256 为 `20dc8536307cb5e825e50f279807d1820876960707a73db8ca29decdf4ee8ca8`。生产环境请将 `main` 换成已审计的完整提交号；当前 Release 暂未提供 ARM64 预编译包。
+入口会固定下载 Release `v0.1.0`，校验归档 SHA-256、归档内部 manifest 和核心哈希后才部署。glibc 归档 SHA-256 为 `ea19d8faee337cfc4bdb78c9c0527dddb16f03d7760792b98a5124c56c92a48b`，musl 归档 SHA-256 为 `93e2cab2d2eb643f014ec503939da2cfd16eed2941a4f7f6ddf983ffe277a458`。生产环境请将 `main` 换成已审计的完整提交号；当前 Release 暂未提供 ARM64 预编译包。
 
 ## 构建核心（备用）
 
