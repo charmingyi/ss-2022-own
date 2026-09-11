@@ -17,7 +17,7 @@ for command in python3 sha256sum tar gzip file readelf; do
     command -v "$command" >/dev/null 2>&1 || fatal "缺少命令：$command"
 done
 case "$ARCH" in amd64) ;; *) fatal '当前发布脚本只打包 amd64；设置 SSOWN_RELEASE_ARCH=amd64。' ;; esac
-case "$LIBC" in glibc) ;; *) fatal '当前预编译发布只提供 glibc 变体。' ;; esac
+case "$LIBC" in glibc|musl) ;; *) fatal '预编译发布的 libc 必须是 glibc 或 musl。' ;; esac
 
 ss_binary="${DIST_ROOT}/ssserver-${ARCH}-${LIBC}"
 xray_binary="${DIST_ROOT}/xray-${ARCH}-static"

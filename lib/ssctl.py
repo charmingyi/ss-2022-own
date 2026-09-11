@@ -11,6 +11,7 @@ import argparse
 import base64
 import binascii
 import datetime as dt
+import getpass
 import ipaddress
 import json
 import os
@@ -45,8 +46,11 @@ BIN_DIR = rooted("/usr/local/libexec/ss-2022-own")
 SS_BIN = BIN_DIR / "ssserver"
 XRAY_BIN = BIN_DIR / "xray"
 SYSTEMD_DIR = rooted("/etc/systemd/system")
+OPENRC_DIR = rooted("/etc/init.d")
 SS_SERVICE = SYSTEMD_DIR / "ss-2022-own-ss.service"
 XRAY_SERVICE = SYSTEMD_DIR / "ss-2022-own-xray.service"
+OPENRC_SS_SERVICE = OPENRC_DIR / "ss-2022-own-ss"
+OPENRC_XRAY_SERVICE = OPENRC_DIR / "ss-2022-own-xray"
 
 # The custom build enables only the modern AEAD-2022 family.  Keeping the
 # allow-list in sync with build-core.sh prevents a config from selecting a
@@ -83,6 +87,24 @@ def can_use_systemd() -> bool:
         and command_exists("systemctl")
         and Path("/run/systemd/system").exists()
     )
+
+
+def can_use_openrc() -> bool:
+    return (
+        os.environ.get("SSOWN_NO_OPENRC") != "1"
+        and ETC_DIR == Path("/etc/ss-2022-own")
+        and command_exists("rc-service")
+        and command_exists("rc-update")
+        and Path("/sbin/openrc-run").exists()
+    )
+
+
+def init_system_name() -> str:
+    if can_use_systemd():
+        return "systemd"
+    if can_use_openrc():
+        return "openrc"
+    return "none"
 
 
 def run_command(
@@ -184,20 +206,48 @@ def service_user_ready() -> None:
         return
     except KeyError:
         pass
-    if not command_exists("useradd"):
-        die(f"未找到 useradd，无法创建系统用户 {SERVICE_USER}。")
-    run_command(
-        [
-            "useradd",
-            "--system",
-            "--user-group",
-            "--home-dir",
-            "/nonexistent",
-            "--shell",
-            "/usr/sbin/nologin",
-            SERVICE_USER,
-        ]
-    )
+    if command_exists("useradd"):
+        run_command(
+            [
+                "useradd",
+                "--system",
+                "--user-group",
+                "--home-dir",
+                "/nonexistent",
+                "--shell",
+                "/usr/sbin/nologin",
+                SERVICE_USER,
+            ]
+        )
+        return
+    # Alpine's BusyBox commonly provides adduser/addgroup instead of useradd.
+    if command_exists("adduser"):
+        if command_exists("addgroup"):
+            try:
+                import grp
+
+                grp.getgrnam(SERVICE_USER)
+            except KeyError:
+                run_command(["addgroup", "-S", SERVICE_USER])
+        run_command(
+            [
+                "adduser",
+                "-S",
+                "-D",
+                "-H",
+                "-h",
+                "/var/empty",
+                "-s",
+                "/sbin/nologin",
+                "-G",
+                SERVICE_USER,
+                "-g",
+                SERVICE_USER,
+                SERVICE_USER,
+            ]
+        )
+        return
+    die(f"未找到 useradd/adduser，无法创建系统用户 {SERVICE_USER}。")
 
 
 def chown_service_file(path: Path) -> None:
@@ -797,6 +847,128 @@ WantedBy=multi-user.target
 """
 
 
+def openrc_service_content(kind: str) -> str:
+    if kind == "ss":
+        description = "Auditable Shadowsocks Rust core for ss-2022-own"
+        command = SS_BIN
+        config = SS_CONFIG
+    else:
+        description = "Auditable Xray core for ss-2022-own"
+        command = XRAY_BIN
+        config = XRAY_CONFIG
+    return f'''#!/sbin/openrc-run
+
+description="{description}"
+command="{command}"
+command_args="-c {config}"
+command_user="{SERVICE_USER}:{SERVICE_USER}"
+pidfile="/run/${{RC_SVCNAME}}.pid"
+supervisor="supervise-daemon"
+respawn_delay=3
+respawn_max=5
+respawn_period=60
+
+depend() {{
+    need net
+    after firewall
+}}
+'''
+
+
+def write_openrc_file(path: Path, content: str) -> None:
+    ensure_dir(OPENRC_DIR, 0o755)
+    atomic_write_text(path, content, 0o755)
+
+
+def configure_bind_capability(kind: str, low_port: bool) -> None:
+    """Grant only bind capability on OpenRC, where ambient caps are unavailable."""
+    if not can_use_openrc():
+        return
+    path = binary_path(kind)
+    if not path.is_file() or path.is_symlink():
+        die(f"无法为不存在或符号链接核心设置低端口能力：{path}")
+    if not command_exists("setcap"):
+        if low_port:
+            die("Alpine/OpenRC 的低端口服务需要 setcap；请显式安装 libcap 后重试。")
+        return
+    if low_port:
+        run_command(["setcap", "cap_net_bind_service=+ep", str(path)])
+    else:
+        run_command(["setcap", "-r", str(path)], check=False)
+
+
+def write_runtime_service(kind: str, low_port: bool) -> None:
+    configure_bind_capability(kind, low_port)
+    if kind == "ss":
+        if can_use_systemd():
+            write_service_file(SS_SERVICE, ss_service_content(low_port))
+        elif can_use_openrc():
+            write_openrc_file(OPENRC_SS_SERVICE, openrc_service_content("ss"))
+        else:
+            print("[提示] 未检测到 systemd/OpenRC；仅写入配置，不创建服务。")
+    elif kind == "xray":
+        if can_use_systemd():
+            write_service_file(XRAY_SERVICE, xray_service_content(low_port))
+        elif can_use_openrc():
+            write_openrc_file(OPENRC_XRAY_SERVICE, openrc_service_content("xray"))
+        else:
+            print("[提示] 未检测到 systemd/OpenRC；仅写入配置，不创建服务。")
+    else:
+        die(f"未知服务类型：{kind}")
+
+
+def openrc_name(name: str) -> str:
+    return name[:-8] if name.endswith(".service") else name
+
+
+def openrc_service_action(action: str, name: str, *, check: bool = True) -> bool:
+    if not can_use_openrc():
+        print("[提示] 当前环境未执行 OpenRC 操作。")
+        return True
+    service = openrc_name(name)
+    if action == "enable":
+        command = ["rc-update", "add", service, "default"]
+    elif action == "disable":
+        command = ["rc-update", "del", service, "default"]
+    elif action == "disable-now":
+        stop = run_command(["rc-service", service, "stop"], check=False, capture=True)
+        run_command(["rc-update", "del", service, "default"], check=False, capture=True)
+        if check and stop.returncode not in {0, 3}:
+            detail = (stop.stderr or stop.stdout or "").strip()
+            die(f"rc-service {service} stop 失败：{detail}")
+        return stop.returncode in {0, 3}
+    elif action in {"start", "stop", "restart", "status"}:
+        command = ["rc-service", service, action]
+    else:
+        die(f"未知 OpenRC 操作：{action}")
+    result = run_command(command, check=False, capture=action == "status")
+    if action == "status" and result.stdout:
+        print(result.stdout, end="")
+    if action == "status" and result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+    if check and result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        die(f"{' '.join(command)} 失败：{detail}")
+    return result.returncode == 0
+
+
+def service_action(action: str, name: str, *, check: bool = True) -> bool:
+    if can_use_systemd():
+        if action == "disable-now":
+            return systemctl("disable", "--now", name, check=check)
+        if action == "is-active":
+            return systemctl("is-active", name, check=check)
+        if action == "status":
+            return systemctl("--no-pager", "status", name, check=check)
+        return systemctl(action, name, check=check)
+    if can_use_openrc():
+        if action == "is-active":
+            action = "status"
+        return openrc_service_action(action, name, check=check)
+    print("[提示] 当前环境未执行服务操作。")
+    return True
+
+
 def systemctl(*arguments: str, check: bool = True) -> bool:
     if not can_use_systemd():
         print("[提示] 当前环境未执行 systemd 操作；配置文件已写入。")
@@ -809,10 +981,17 @@ def systemctl(*arguments: str, check: bool = True) -> bool:
 
 
 def apply_service(path: Path, name: str, *, start: bool) -> None:
-    systemctl("daemon-reload")
-    systemctl("enable", name)
-    if start:
-        systemctl("restart", name)
+    if can_use_systemd():
+        systemctl("daemon-reload")
+        systemctl("enable", name)
+        if start:
+            systemctl("restart", name)
+    elif can_use_openrc():
+        openrc_service_action("enable", name)
+        if start:
+            openrc_service_action("restart", name)
+    else:
+        print("[提示] 当前环境没有可用的服务管理器；请手动启动核心。")
 
 
 def validate_xray_file(config_path: Path, *, warn_missing: bool = True) -> None:
@@ -893,7 +1072,7 @@ def install_ss(args: argparse.Namespace) -> None:
     state = load_state()
     upsert_node(state, node)
     save_state(state)
-    write_service_file(SS_SERVICE, ss_service_content(port < 1024))
+    write_runtime_service("ss", port < 1024)
     apply_service(SS_SERVICE, "ss-2022-own-ss.service", start=not args.no_start)
     if args.open_firewall:
         firewall_open(port, "both")
@@ -958,7 +1137,7 @@ def install_reality(args: argparse.Namespace) -> None:
     upsert_node(state, node)
     save_state(state)
     client_path = write_client_file(node, xray_reality_client(node))
-    write_service_file(XRAY_SERVICE, xray_service_content(xray_has_privileged_port(config)))
+    write_runtime_service("xray", xray_has_privileged_port(config))
     validate_xray_with_binary()
     apply_service(XRAY_SERVICE, "ss-2022-own-xray.service", start=not args.no_start)
     if args.open_firewall:
@@ -1022,7 +1201,7 @@ def install_encryption(args: argparse.Namespace) -> None:
     upsert_node(state, node)
     save_state(state)
     client_path = write_client_file(node, xray_encryption_client(node))
-    write_service_file(XRAY_SERVICE, xray_service_content(xray_has_privileged_port(config)))
+    write_runtime_service("xray", xray_has_privileged_port(config))
     validate_xray_with_binary()
     apply_service(XRAY_SERVICE, "ss-2022-own-xray.service", start=not args.no_start)
     if args.open_firewall:
@@ -1053,6 +1232,19 @@ def deploy(args: argparse.Namespace) -> None:
         copied.append(destination)
     if not copied:
         die("至少提供 --ss 或 --xray 一个构建产物路径。")
+    state = load_state()
+    if args.ss:
+        low_port = any(
+            node.get("kind") == "shadowsocks-2022" and isinstance(node.get("port"), int) and node["port"] < 1024
+            for node in state["nodes"]
+        )
+        configure_bind_capability("ss", low_port)
+    if args.xray:
+        low_port = any(
+            node.get("kind", "").startswith("vless-") and isinstance(node.get("port"), int) and node["port"] < 1024
+            for node in state["nodes"]
+        )
+        configure_bind_capability("xray", low_port)
     for path in copied:
         print(f"已部署：{path}")
 
@@ -1065,18 +1257,7 @@ def service_operation(args: argparse.Namespace) -> None:
     if args.kind in {"xray", "all"}:
         targets.append("ss-2022-own-xray.service")
     for name in targets:
-        if args.action == "enable":
-            systemctl("enable", name)
-        elif args.action == "disable":
-            systemctl("disable", name, check=False)
-        elif args.action == "start":
-            systemctl("start", name)
-        elif args.action == "stop":
-            systemctl("stop", name, check=False)
-        elif args.action == "restart":
-            systemctl("restart", name)
-        elif args.action == "status":
-            systemctl("--no-pager", "status", name, check=False)
+        service_action(args.action, name, check=args.action not in {"disable", "stop", "status"})
 
 
 def firewall_active_ufw() -> bool:
@@ -1182,8 +1363,8 @@ def status(_: argparse.Namespace) -> None:
             service = "ss-2022-own-ss.service"
         else:
             service = "ss-2022-own-xray.service"
-        if can_use_systemd():
-            active = systemctl("is-active", service, check=False)
+        if can_use_systemd() or can_use_openrc():
+            active = service_action("is-active", service, check=False)
             print("running" if active else "stopped")
         else:
             print("configured")
@@ -1229,11 +1410,12 @@ def remove(args: argparse.Namespace) -> None:
         backup(XRAY_CONFIG)
         write_config(XRAY_CONFIG, config)
         if config["inbounds"]:
-            write_service_file(XRAY_SERVICE, xray_service_content(xray_has_privileged_port(config)))
+            write_runtime_service("xray", xray_has_privileged_port(config))
         else:
-            systemctl("disable", "--now", "ss-2022-own-xray.service", check=False)
-            if XRAY_SERVICE.exists():
-                XRAY_SERVICE.unlink()
+            service_action("disable-now", "ss-2022-own-xray.service", check=False)
+            for service_path in (XRAY_SERVICE, OPENRC_XRAY_SERVICE):
+                if service_path.exists():
+                    service_path.unlink()
         remove_nodes(state, lambda node: node.get("tag") == tag)
         client_path = CLIENT_DIR / f"{tag}.json"
         if client_path.exists():
@@ -1241,25 +1423,27 @@ def remove(args: argparse.Namespace) -> None:
             client_path.unlink()
         save_state(state)
         validate_xray_with_binary()
-        if can_use_systemd():
-            systemctl("restart", "ss-2022-own-xray.service", check=False)
+        if config["inbounds"] and (can_use_systemd() or can_use_openrc()):
+            service_action("restart", "ss-2022-own-xray.service", check=False)
         print(f"已删除 Xray 节点：{tag}")
         return
     if args.kind in {"ss", "all"}:
         if SS_CONFIG.exists():
             backup(SS_CONFIG)
             SS_CONFIG.unlink()
-        systemctl("disable", "--now", "ss-2022-own-ss.service", check=False)
-        if SS_SERVICE.exists():
-            SS_SERVICE.unlink()
+        service_action("disable-now", "ss-2022-own-ss.service", check=False)
+        for service_path in (SS_SERVICE, OPENRC_SS_SERVICE):
+            if service_path.exists():
+                service_path.unlink()
         remove_nodes(state, lambda node: node.get("kind") == "shadowsocks-2022")
     if args.kind in {"xray", "all"}:
         if XRAY_CONFIG.exists():
             backup(XRAY_CONFIG)
             XRAY_CONFIG.unlink()
-        systemctl("disable", "--now", "ss-2022-own-xray.service", check=False)
-        if XRAY_SERVICE.exists():
-            XRAY_SERVICE.unlink()
+        service_action("disable-now", "ss-2022-own-xray.service", check=False)
+        for service_path in (XRAY_SERVICE, OPENRC_XRAY_SERVICE):
+            if service_path.exists():
+                service_path.unlink()
         for node in list(state["nodes"]):
             if node.get("kind", "").startswith("vless-"):
                 client_path = CLIENT_DIR / f"{node.get('tag')}.json"
@@ -1279,89 +1463,459 @@ def remove(args: argparse.Namespace) -> None:
     print("删除完成。")
 
 
+ANSI_GREEN = "\\033[0;32m"
+ANSI_RED = "\\033[0;31m"
+ANSI_YELLOW = "\\033[1;33m"
+ANSI_CYAN = "\\033[0;36m"
+ANSI_RESET = "\\033[0m"
+
+
+def clear_screen() -> None:
+    if sys.stdout.isatty():
+        print("\\033[2J\\033[H", end="")
+
+
 def prompt(text: str, default: str = "") -> str:
     suffix = f" [{default}]" if default else ""
-    value = input(f"{text}{suffix}: ").strip()
+    try:
+        value = input(f"{text}{suffix}: ").strip()
+    except EOFError:
+        return default
     return value or default
+
+
+def secret_prompt(text: str) -> str:
+    try:
+        return getpass.getpass(f"{text}: ").strip()
+    except (EOFError, getpass.GetPassWarning):
+        return prompt(text)
+
+
+def pause(text: str = "按回车返回上一级...") -> None:
+    if not sys.stdin.isatty():
+        return
+    try:
+        input(text)
+    except EOFError:
+        return
+
+
+def prompt_yes_no(text: str, default: bool = False) -> bool:
+    suffix = " [Y/n]" if default else " [y/N]"
+    while True:
+        value = prompt(text + suffix).lower()
+        if not value:
+            return default
+        if value in {"y", "yes", "是"}:
+            return True
+        if value in {"n", "no", "否"}:
+            return False
+        print("请输入 y 或 n。")
+
+
+def prompt_port(text: str, default: int) -> int:
+    while True:
+        value = prompt(text, str(default))
+        try:
+            return parse_port(value)
+        except UserError as exc:
+            print(f"[错误] {exc}")
+
+
+def node_service(node: dict[str, Any]) -> str:
+    return (
+        "ss-2022-own-ss.service"
+        if node.get("kind") == "shadowsocks-2022"
+        else "ss-2022-own-xray.service"
+    )
+
+
+def kind_label(kind: str) -> str:
+    return {
+        "shadowsocks-2022": "Shadowsocks 2022",
+        "vless-reality": "VLESS Reality",
+        "vless-encryption": "VLESS Encryption",
+    }.get(kind, kind)
+
+
+def core_info(_: argparse.Namespace | None = None) -> None:
+    print(f"{ANSI_CYAN}=== 核心信息 ==={ANSI_RESET}")
+    print(f"初始化系统：{init_system_name()}")
+    print(f"Shadowsocks 核心：{SS_BIN}")
+    print(f"Xray 核心：{XRAY_BIN}")
+    for kind, command in (("Shadowsocks", "ss"), ("Xray", "xray")):
+        path = binary_path(command)
+        if not path.is_file() or not os.access(path, os.X_OK):
+            print(f"{kind:12} 未部署")
+            continue
+        version_command = [str(path), "--version"] if command == "ss" else [str(path), "version"]
+        result = run_command(version_command, check=False, capture=True)
+        version = (result.stdout or result.stderr or "").splitlines()
+        print(f"{kind:12} {version[0] if version else '已部署'}")
+    print("预编译 Release：v0.1.0（Linux amd64/glibc + amd64/musl）")
+    print("glibc Release SHA-256：6ee27771389b8bafc31329671ff0bd705fb47fd0cce33930ca211a077a9f5d21")
+    print("musl Release SHA-256：20dc8536307cb5e825e50f279807d1820876960707a73db8ca29decdf4ee8ca8")
+    print("更新核心：使用同一固定版本 bootstrap.sh --no-menu，或 deploy 指向本地已审计产物。")
+
+
+def logs(args: argparse.Namespace) -> None:
+    require_root()
+    if not 1 <= args.lines <= 10000:
+        die("日志行数必须在 1-10000 范围内。")
+    service = {
+        "ss": "ss-2022-own-ss.service",
+        "xray": "ss-2022-own-xray.service",
+        "all": "",
+    }[args.kind]
+    if can_use_openrc() and command_exists("logread"):
+        print(f"{ANSI_CYAN}=== Alpine/OpenRC 最近 {args.lines} 行系统日志 ==={ANSI_RESET}")
+        result = run_command(["logread", "-l", str(args.lines)], check=False, capture=True)
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, file=sys.stderr, end="")
+        return
+    if not can_use_systemd() or not command_exists("journalctl"):
+        print("当前环境没有可用的 systemd/journalctl 或 OpenRC/logread。")
+        return
+    services = [service] if service else ["ss-2022-own-ss.service", "ss-2022-own-xray.service"]
+    for index, name in enumerate(services):
+        if index:
+            print("\n---")
+        print(f"{ANSI_CYAN}=== {name} 最近 {args.lines} 行 ==={ANSI_RESET}")
+        result = run_command(
+            ["journalctl", "--no-pager", "--full", "-n", str(args.lines), "-u", name],
+            check=False,
+            capture=True,
+        )
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, file=sys.stderr, end="")
+
+
+def managed_service(action: str, kind: str = "all") -> None:
+    service_operation(argparse.Namespace(action=action, kind=kind))
+
+
+def install_from_menu(kind: str) -> None:
+    if kind == "ss":
+        method = prompt("加密方式", "2022-blake3-aes-256-gcm")
+        while method not in SS_METHODS:
+            print("可用：" + ", ".join(sorted(SS_METHODS)))
+            method = prompt("加密方式", "2022-blake3-aes-256-gcm")
+        password = secret_prompt("密码（留空随机生成）") or None
+        args = argparse.Namespace(
+            method=method,
+            port=prompt_port("端口", 8388),
+            listen=prompt("监听地址", "0.0.0.0"),
+            server_address=prompt("服务器地址（可留空）"),
+            tag=prompt("节点 tag", "ss2022"),
+            password=password,
+            password_stdin=False,
+            fast_open=True,
+            no_start=False,
+            open_firewall=prompt_yes_no("是否显式放行 TCP/UDP 防火墙端口", False),
+        )
+        install_ss(args)
+        return
+    if kind == "reality":
+        args = argparse.Namespace(
+            port=prompt_port("端口", 443),
+            listen=prompt("监听地址", "0.0.0.0"),
+            server_address=prompt("服务器地址（可留空）"),
+            tag=prompt("节点 tag", "vless-reality"),
+            target=prompt("伪装目标 host:port", "www.example.com:443"),
+            server_name=prompt("允许的 SNI", "www.example.com"),
+            uuid=prompt("UUID（留空随机生成）") or None,
+            flow="xtls-rprx-vision",
+            fingerprint=prompt("指纹", "chrome"),
+            short_id=prompt("short ID（留空随机生成）"),
+            private_key=None,
+            public_key=None,
+            spider_x=prompt("spiderX", "/"),
+            no_start=False,
+            open_firewall=prompt_yes_no("是否显式放行 TCP 防火墙端口", False),
+        )
+        install_reality(args)
+        return
+    if kind == "encryption":
+        auth = prompt("认证方式（x25519/mlkem768）", "x25519")
+        while auth not in {"x25519", "mlkem768"}:
+            auth = prompt("认证方式（x25519/mlkem768）", "x25519")
+        appearance = prompt("外观（native/xorpub/random）", "native")
+        args = argparse.Namespace(
+            port=prompt_port("端口", 8443),
+            listen=prompt("监听地址", "0.0.0.0"),
+            server_address=prompt("服务器地址（可留空）"),
+            tag=prompt("节点 tag", "vless-encryption"),
+            uuid=prompt("UUID（留空随机生成）") or None,
+            flow="xtls-rprx-vision",
+            auth=auth,
+            appearance=appearance,
+            ticket_ttl=prompt("ticket TTL", "600s"),
+            private_key=None,
+            public_key=None,
+            no_start=False,
+            open_firewall=prompt_yes_no("是否显式放行 TCP 防火墙端口", False),
+        )
+        install_encryption(args)
+        return
+    die(f"未知协议：{kind}")
+
+
+def node_menu() -> None:
+    while True:
+        clear_screen()
+        print(f"{ANSI_CYAN}=== 节点管理 ==={ANSI_RESET}")
+        print("1. 查看节点（隐藏凭据）")
+        print("2. 查看指定节点详情")
+        print("3. 显示指定节点分享链接（需确认）")
+        print("4. 删除指定节点")
+        print("5. 验证全部配置")
+        print("0. 返回主菜单")
+        choice = prompt("请选择")
+        try:
+            if choice == "0":
+                return
+            if choice == "1":
+                show(argparse.Namespace(tag=None, reveal=False, server_address=None))
+            elif choice == "2":
+                show(argparse.Namespace(tag=prompt("节点 tag"), reveal=False, server_address=None))
+            elif choice == "3":
+                if prompt("请输入 SHOW 确认显示凭据") == "SHOW":
+                    show(argparse.Namespace(tag=prompt("节点 tag"), reveal=True, server_address=None))
+                else:
+                    print("已取消。")
+            elif choice == "4":
+                tag = validate_tag(prompt("要删除的节点 tag"))
+                state = load_state()
+                node = next((item for item in state["nodes"] if item.get("tag") == tag), None)
+                if not node:
+                    die(f"未找到节点：{tag}")
+                if prompt("请输入 DELETE 确认删除") == "DELETE":
+                    if node.get("kind") == "shadowsocks-2022":
+                        remove(argparse.Namespace(kind="ss", tag=None, yes=True))
+                    else:
+                        remove(argparse.Namespace(kind="all", tag=tag, yes=True))
+                else:
+                    print("已取消。")
+            elif choice == "5":
+                validate(argparse.Namespace())
+            else:
+                print("无效选项。")
+        except (UserError, ValueError) as exc:
+            print(f"{ANSI_RED}[错误] {exc}{ANSI_RESET}")
+        pause()
+
+
+def service_menu() -> None:
+    while True:
+        clear_screen()
+        print(f"{ANSI_CYAN}=== 服务管理 ==={ANSI_RESET}")
+        print("1. 启动全部服务")
+        print("2. 停止全部服务")
+        print("3. 重启全部服务")
+        print("4. 查看服务状态")
+        print("5. 重启 Shadowsocks")
+        print("6. 重启 Xray（Reality/Encryption）")
+        print("0. 返回主菜单")
+        choice = prompt("请选择")
+        try:
+            actions = {
+                "1": ("start", "all"),
+                "2": ("stop", "all"),
+                "3": ("restart", "all"),
+                "4": ("status", "all"),
+                "5": ("restart", "ss"),
+                "6": ("restart", "xray"),
+            }
+            if choice == "0":
+                return
+            if choice not in actions:
+                print("无效选项。")
+            else:
+                managed_service(*actions[choice])
+        except UserError as exc:
+            print(f"{ANSI_RED}[错误] {exc}{ANSI_RESET}")
+        pause()
+
+
+def config_menu() -> None:
+    while True:
+        clear_screen()
+        print(f"{ANSI_CYAN}=== 配置与分享 ==={ANSI_RESET}")
+        print("1. 查看配置摘要（隐藏凭据）")
+        print("2. 显示分享链接（需输入 SHOW）")
+        print("3. 验证配置")
+        print("0. 返回主菜单")
+        choice = prompt("请选择")
+        try:
+            if choice == "0":
+                return
+            if choice == "1":
+                show(argparse.Namespace(tag=None, reveal=False, server_address=None))
+            elif choice == "2":
+                if prompt("请输入 SHOW 确认") == "SHOW":
+                    show(argparse.Namespace(tag=None, reveal=True, server_address=None))
+                else:
+                    print("已取消。")
+            elif choice == "3":
+                validate(argparse.Namespace())
+            else:
+                print("无效选项。")
+        except UserError as exc:
+            print(f"{ANSI_RED}[错误] {exc}{ANSI_RESET}")
+        pause()
+
+
+def firewall_menu() -> None:
+    while True:
+        clear_screen()
+        print(f"{ANSI_CYAN}=== 防火墙（仅显式操作） ==={ANSI_RESET}")
+        print("1. 放行端口")
+        print("2. 回收端口")
+        print("0. 返回主菜单")
+        choice = prompt("请选择")
+        if choice == "0":
+            return
+        if choice not in {"1", "2"}:
+            print("无效选项。")
+            pause()
+            continue
+        try:
+            port = prompt_port("端口", 443)
+            protocol = prompt("协议（tcp/udp/both）", "tcp")
+            if choice == "1":
+                firewall_open(port, protocol)
+            else:
+                firewall_close(port, protocol)
+        except UserError as exc:
+            print(f"{ANSI_RED}[错误] {exc}{ANSI_RESET}")
+        pause()
+
+
+def uninstall_menu() -> None:
+    while True:
+        clear_screen()
+        print(f"{ANSI_CYAN}=== 节点卸载（不可逆，需确认） ==={ANSI_RESET}")
+        print("1. 卸载 Shadowsocks 节点")
+        print("2. 卸载全部 VLESS 节点")
+        print("3. 卸载全部节点")
+        print("0. 返回主菜单")
+        choice = prompt("请选择")
+        if choice == "0":
+            return
+        kinds = {"1": "ss", "2": "xray", "3": "all"}
+        if choice not in kinds:
+            print("无效选项。")
+            pause()
+            continue
+        if prompt("请输入 DELETE 确认") != "DELETE":
+            print("已取消。")
+            pause()
+            continue
+        try:
+            remove(argparse.Namespace(kind=kinds[choice], tag=None, yes=True))
+        except UserError as exc:
+            print(f"{ANSI_RED}[错误] {exc}{ANSI_RESET}")
+        pause()
+
+
+def core_menu() -> None:
+    while True:
+        clear_screen()
+        print(f"{ANSI_CYAN}=== 核心管理 ==={ANSI_RESET}")
+        print("1. 查看核心版本/Release 信息")
+        print("2. 验证当前配置")
+        print("3. 从本地已审计产物重新部署")
+        print("0. 返回主菜单")
+        choice = prompt("请选择")
+        if choice == "0":
+            return
+        try:
+            if choice == "1":
+                core_info()
+            elif choice == "2":
+                validate(argparse.Namespace())
+            elif choice == "3":
+                ss = prompt("ssserver 文件路径（可留空）") or None
+                xray = prompt("xray 文件路径（可留空）") or None
+                deploy(argparse.Namespace(ss=ss, xray=xray))
+            else:
+                print("无效选项。")
+        except UserError as exc:
+            print(f"{ANSI_RED}[错误] {exc}{ANSI_RESET}")
+        pause()
+
+
+def prompt_install(kind: str) -> None:
+    try:
+        install_from_menu(kind)
+    except (UserError, ValueError) as exc:
+        print(f"{ANSI_RED}[错误] {exc}{ANSI_RESET}")
+    pause()
 
 
 def menu(_: argparse.Namespace) -> None:
     require_root()
     while True:
-        print("\n=== ss-2022-own 管理菜单 ===")
-        print("1. 安装/覆盖 Shadowsocks 2022")
-        print("2. 安装/覆盖 VLESS Reality")
-        print("3. 安装/覆盖 VLESS Encryption")
-        print("4. 查看节点（隐藏密钥）")
-        print("5. 查看节点（显示分享信息）")
-        print("6. 服务状态")
-        print("0. 退出")
-        choice = input("请选择: ").strip()
-        if choice == "0":
-            return
-        if choice == "4":
-            show(argparse.Namespace(tag=None, reveal=False, server_address=None))
-            continue
-        if choice == "5":
-            show(argparse.Namespace(tag=None, reveal=True, server_address=None))
-            continue
-        if choice == "6":
+        clear_screen()
+        print(f"{ANSI_GREEN}============================================{ANSI_RESET}")
+        print(f"{ANSI_GREEN}       ss-2022-own 节点管理菜单 v{APP_VERSION}{ANSI_RESET}")
+        print(f"{ANSI_GREEN}============================================{ANSI_RESET}")
+        try:
             status(argparse.Namespace())
-            continue
-        if choice == "1":
-            args = argparse.Namespace(
-                method=prompt("method", "2022-blake3-aes-256-gcm"),
-                port=int(prompt("端口", "8388")),
-                listen=prompt("监听地址", "0.0.0.0"),
-                server_address=prompt("服务器地址（可留空）", ""),
-                tag=prompt("tag", "ss2022"),
-                password=None,
-                password_stdin=False,
-                fast_open=True,
-                no_start=False,
-                open_firewall=False,
-            )
-            install_ss(args)
-            continue
-        if choice == "2":
-            args = argparse.Namespace(
-                port=int(prompt("端口", "443")),
-                listen=prompt("监听地址", "0.0.0.0"),
-                server_address=prompt("服务器地址（可留空）", ""),
-                tag=prompt("tag", "vless-reality"),
-                target=prompt("伪装目标 host:port", "www.example.com:443"),
-                server_name=prompt("允许的 SNI", "www.example.com"),
-                uuid=None,
-                flow="xtls-rprx-vision",
-                fingerprint="chrome",
-                short_id="",
-                private_key=None,
-                public_key=None,
-                spider_x="/",
-                no_start=False,
-                open_firewall=False,
-            )
-            install_reality(args)
-            continue
-        if choice == "3":
-            args = argparse.Namespace(
-                port=int(prompt("端口", "8443")),
-                listen=prompt("监听地址", "0.0.0.0"),
-                server_address=prompt("服务器地址（可留空）", ""),
-                tag=prompt("tag", "vless-encryption"),
-                uuid=None,
-                flow="xtls-rprx-vision",
-                auth=prompt("auth (x25519/mlkem768)", "x25519"),
-                appearance=prompt("appearance", "native"),
-                ticket_ttl=prompt("ticket TTL", "600s"),
-                private_key=None,
-                public_key=None,
-                no_start=False,
-                open_firewall=False,
-            )
-            install_encryption(args)
-            continue
-        print("无效选项。")
+        except UserError as exc:
+            print(f"{ANSI_RED}[状态错误] {exc}{ANSI_RESET}")
+        print(f"{ANSI_CYAN}--------------------------------------------{ANSI_RESET}")
+        print(" 1. 安装/覆盖 Shadowsocks 2022")
+        print(" 2. 安装/覆盖 VLESS Reality")
+        print(" 3. 安装/覆盖 VLESS Encryption")
+        print(" 4. 节点管理（查看/删除）")
+        print(" 5. 服务管理（启停/重启）")
+        print(" 6. 配置与分享")
+        print(" 7. 查看运行日志")
+        print(" 8. 防火墙管理（显式操作）")
+        print(" 9. 核心管理/版本/校验")
+        print("10. 卸载节点")
+        print(" 0. 退出")
+        print(f"{ANSI_CYAN}--------------------------------------------{ANSI_RESET}")
+        choice = prompt("请输入选项")
+        try:
+            if choice == "0":
+                return
+            if choice == "1":
+                prompt_install("ss")
+            elif choice == "2":
+                prompt_install("reality")
+            elif choice == "3":
+                prompt_install("encryption")
+            elif choice == "4":
+                node_menu()
+            elif choice == "5":
+                service_menu()
+            elif choice == "6":
+                config_menu()
+            elif choice == "7":
+                kind = prompt("服务（ss/xray/all）", "all")
+                if kind not in {"ss", "xray", "all"}:
+                    print("服务必须是 ss、xray 或 all。")
+                else:
+                    logs(argparse.Namespace(kind=kind, lines=50))
+                    pause()
+            elif choice == "8":
+                firewall_menu()
+            elif choice == "9":
+                core_menu()
+            elif choice == "10":
+                uninstall_menu()
+            else:
+                print("无效选项。")
+                pause()
+        except (UserError, ValueError) as exc:
+            print(f"{ANSI_RED}[错误] {exc}{ANSI_RESET}")
+            pause()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1371,7 +1925,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    install = sub.add_parser("install", help="生成配置并安装 systemd 服务")
+    install = sub.add_parser("install", help="生成配置并安装 systemd/OpenRC 服务")
     install_sub = install.add_subparsers(dest="kind", required=True)
 
     ss = install_sub.add_parser("ss", help="安装 Shadowsocks 2022")
@@ -1435,10 +1989,18 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser = sub.add_parser("status", help="查看服务状态")
     status_parser.set_defaults(handler=status)
 
+    core_info_parser = sub.add_parser("core-info", help="查看已部署核心和固定 Release 信息")
+    core_info_parser.set_defaults(handler=core_info)
+
+    logs_parser = sub.add_parser("logs", help="查看服务日志")
+    logs_parser.add_argument("kind", choices=["ss", "xray", "all"], default="all", nargs="?")
+    logs_parser.add_argument("--lines", type=int, default=50)
+    logs_parser.set_defaults(handler=logs)
+
     validate_parser = sub.add_parser("validate", help="验证 JSON 和核心配置")
     validate_parser.set_defaults(handler=validate)
 
-    service_parser = sub.add_parser("service", help="控制 systemd 服务")
+    service_parser = sub.add_parser("service", help="控制 systemd/OpenRC 服务")
     service_parser.add_argument("action", choices=["enable", "disable", "start", "stop", "restart", "status"])
     service_parser.add_argument("kind", choices=["ss", "xray", "all"], default="all", nargs="?")
     service_parser.set_defaults(handler=service_operation)

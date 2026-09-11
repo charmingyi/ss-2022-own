@@ -4,6 +4,8 @@
 
 `build-core.sh` 不读取 latest API，也不执行上游构建脚本。当前输入为：
 
+默认 Release 同时包含 amd64/glibc 与 amd64/musl；Alpine 应使用 musl 归档，Debian/Ubuntu 可使用 glibc 归档。
+
 ```text
 shadowsocks-rust v1.24.0
   commit: 7ee1aa9223ed8f4d34734aac919036c8ad4502c2
@@ -64,7 +66,7 @@ Xray 使用 `CGO_ENABLED=0`、`-trimpath`、`-buildvcs=false`、空 Go build ID 
 ./build-core.sh --core all --arch amd64 --libc musl --offline
 ```
 
-成功后 `dist/manifest-*.json` 会记录源码、目标、工具链和产物 SHA-256。
+脚本对 musl 目标显式传入 `-static`、`crt-static`、`relocation-model=static` 和固定 linker；成功后还会运行 `--version`，并以 `readelf -lW` 无 `PT_INTERP`、`readelf -dW` 无 `DT_NEEDED` 为准，而不是只看 `file` 输出。成功后 `dist/manifest-*.json` 会记录源码、目标、工具链和产物 SHA-256。
 
 ## glibc 2.36 变体
 

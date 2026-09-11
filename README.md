@@ -35,11 +35,11 @@ Xray v25.9.11 已包含 [VLESS Encryption PR #5067](https://github.com/XTLS/Xray
 - Shadowsocks：Linux musl 静态目标（`x86_64-unknown-linux-musl` 或 `aarch64-unknown-linux-musl`）。
 - Xray：`CGO_ENABLED=0` 的静态 Go 二进制。
 
-因此默认产物不依赖运行环境的 glibc，强于“最低 glibc 2.36”。若选择 `--libc glibc`，应在 Debian 12/bookworm（glibc 2.36）构建，并由 `readelf`/`objdump` 检查最高 `GLIBC_2.x` 符号不得超过 2.36。详见 [`docs/BUILD.md`](docs/BUILD.md)。
+因此默认产物不依赖运行环境的 glibc，强于“最低 glibc 2.36”。若选择 `--libc glibc`，应在 Debian 12/bookworm（glibc 2.36）构建，并由 `readelf`/`objdump` 检查最高 `GLIBC_2.x` 符号不得超过 2.36。Alpine 使用 musl 静态 Release 和 OpenRC 服务模板，详见 [`docs/BUILD.md`](docs/BUILD.md) 与 [`docs/ALPINE.md`](docs/ALPINE.md)。
 
 ## 预编译一键安装
 
-当前公开 Release 提供 Linux amd64/glibc 预编译核心，安装服务器不需要 Go 或 Rust：
+当前公开 Release 提供 Linux amd64/glibc 与 amd64/musl 预编译核心，安装服务器不需要 Go 或 Rust：Debian/Ubuntu 选择 glibc，Alpine 会自动选择 musl。
 
 ```bash
 curl --fail --proto '=https' --tlsv1.2 -fsSL \
@@ -47,7 +47,7 @@ curl --fail --proto '=https' --tlsv1.2 -fsSL \
   | SSOWN_REF=main bash
 ```
 
-入口会固定下载 Release `v0.1.0`，校验归档 SHA-256、归档内部 manifest 和核心哈希后才部署。生产环境请将 `main` 换成已审计的完整提交号；目标为 ARM64 或其他 libc 时，当前 Release 尚未提供对应预编译包。
+入口会固定下载 Release `v0.1.0`，校验归档 SHA-256、归档内部 manifest 和核心哈希后才部署。glibc 归档 SHA-256 为 `6ee27771389b8bafc31329671ff0bd705fb47fd0cce33930ca211a077a9f5d21`，musl 归档 SHA-256 为 `20dc8536307cb5e825e50f279807d1820876960707a73db8ca29decdf4ee8ca8`。生产环境请将 `main` 换成已审计的完整提交号；当前 Release 暂未提供 ARM64 预编译包。
 
 ## 构建核心（备用）
 
@@ -76,7 +76,7 @@ sudo ./ssctl.sh deploy \
 
 `manifest-*.json` 记录固定源码哈希、提交、目标架构、工具链、可复现性补丁和二进制 SHA-256。上游 `build-time` 0.1.3 实际取 `Utc::now()`，所以 [`patches/shadowsocks-rust-build-time.patch`](patches/shadowsocks-rust-build-time.patch) 是构建输入的一部分；不要把 `dist/` 产物或服务端状态文件提交到公开仓库。
 
-构建出 amd64/glibc 产物后，可用 [`package-release.sh`](package-release.sh) 生成带固定时间、owner、顺序和内部 SHA256SUMS 的 Release 归档：
+构建出 amd64/glibc 或 amd64/musl 产物后，可用 [`package-release.sh`](package-release.sh) 生成带固定时间、owner、顺序和内部 SHA256SUMS 的 Release 归档：
 
 ```bash
 ./package-release.sh
@@ -164,6 +164,16 @@ sudo ./ssctl.sh remove xray --yes
 ```
 
 客户端 JSON 保存在 `/etc/ss-2022-own/clients/`，权限为 `0600`。分享 URI 中的 UUID、公钥/Client 也按节点凭据处理；服务端 `private_key`、`decryption` 绝不能上传或放进链接。
+
+## 交互菜单与管理
+
+直接运行 `sudo /usr/local/share/ss-2022-own/ssctl.sh menu`（或安装目录中的 `ssctl.sh menu`）即可进入彩色管理菜单，外壳参考上游菜单但只保留本项目自有功能：
+
+- 三种协议安装/覆盖：SS 2022、VLESS Reality、VLESS Encryption。
+- 节点查看、凭据隐藏/确认显示、按 tag 删除、配置验证。
+- SS/Xray 服务启停、重启、状态和日志；Debian 使用 systemd，Alpine 使用 OpenRC。
+- 核心版本/Release 信息、本地产物部署，以及显式 UFW/firewalld 防火墙操作。
+- 卸载操作必须输入 `DELETE`；分享信息必须输入 `SHOW`，避免误操作和凭据泄露。
 
 ## 一键入口
 

@@ -59,12 +59,13 @@ run install reality --port 443 --server-address node.example \
 run install encryption --port 8443 --server-address node.example \
   --private-key "$key_a" --public-key "$key_b" --no-start >/dev/null
 
-python3 - "$TEST_ROOT" <<'PY'
+python3 - "$TEST_ROOT" "$PROJECT_DIR" <<'PY'
 import json
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
+project = pathlib.Path(sys.argv[2])
 etc = root / "etc" / "ss-2022-own"
 ss = json.loads((etc / "ss.json").read_text())
 xray = json.loads((etc / "xray.json").read_text())
@@ -80,10 +81,16 @@ assert encryption["streamSettings"]["security"] == "none"
 assert {n["kind"] for n in state["nodes"]} == {"shadowsocks-2022", "vless-reality", "vless-encryption"}
 assert (etc / "clients" / "vless-reality.json").exists()
 assert (etc / "clients" / "vless-encryption.json").exists()
-ss_unit = (root / "etc/systemd/system/ss-2022-own-ss.service").read_text()
-xray_unit = (root / "etc/systemd/system/ss-2022-own-xray.service").read_text()
+sys.path.insert(0, str(project / "lib"))
+# The test runs with an isolated SSOWN_ROOT, so exercise templates directly.
+import ssctl
+ss_unit = ssctl.ss_service_content(False)
+xray_unit = ssctl.xray_service_content(True)
+openrc_unit = ssctl.openrc_service_content("xray")
 assert "User=ssown" in ss_unit
 assert "CapabilityBoundingSet=CAP_NET_BIND_SERVICE" in xray_unit
+assert "supervisor=\"supervise-daemon\"" in openrc_unit
+assert "command_background=true" not in openrc_unit
 PY
 
 # Default output must not expose secrets.
