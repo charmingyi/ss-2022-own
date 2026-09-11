@@ -31,6 +31,8 @@ ss_password=$(head -c 32 /dev/zero | base64 | tr -d '\n')
 
 run() { "$PROJECT_DIR/ssctl.sh" "$@"; }
 
+run install ss --method aes-256-gcm --port 8388 --server-address node.example --password 'ordinary-ss-password' --no-start >/dev/null
+jq -e '.method == "aes-256-gcm" and .password == "ordinary-ss-password"' "$TEST_ROOT/etc/ss-2022-own/ss.json" >/dev/null
 run install ss --port 8388 --server-address node.example --password "$ss_password" --no-start >/dev/null
 run install reality --port 443 --server-address node.example \
   --target www.example.com:443 --server-name www.example.com \

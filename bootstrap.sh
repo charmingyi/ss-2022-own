@@ -8,20 +8,20 @@ umask 077
 REF=${SSOWN_REF:-main}
 INSTALL_DIR=${SSOWN_SOURCE_DIR:-/usr/local/share/ss-2022-own}
 RAW_BASE=${SSOWN_RAW_BASE:-https://raw.githubusercontent.com/charmingyi/ss-2022-own/${REF}}
-RELEASE_TAG="v0.1.0"
+RELEASE_TAG="v0.1.1"
 RELEASE_ASSET_AMD64_GLIBC="ss-2022-own-linux-amd64-glibc.tar.gz"
 RELEASE_ASSET_AMD64_MUSL="ss-2022-own-linux-amd64-musl.tar.gz"
-# SHA-256 values of the immutable v0.1.0 archives published by this repository.
-RELEASE_SHA256_AMD64_GLIBC="ea19d8faee337cfc4bdb78c9c0527dddb16f03d7760792b98a5124c56c92a48b"
-RELEASE_SHA256_AMD64_MUSL="93e2cab2d2eb643f014ec503939da2cfd16eed2941a4f7f6ddf983ffe277a458"
+# SHA-256 values of the immutable v0.1.1 archives published by this repository.
+RELEASE_SHA256_AMD64_GLIBC="92a06dbf5951ddd85d05a750af302fd06b827a3b82b56269a4003e9a31b061f2"
+RELEASE_SHA256_AMD64_MUSL="40430c6f1db9a2752db4626fbc404319310382f5dec23799a2074909744a4b34"
 
 # Hashes of the small, reviewed manager surface fetched from this exact REF.
 # The binary Release is checked separately above and never comes from main.
 SOURCE_SHA256_SSCTL="0a9efae38684ff943ef2257d198ac2c42ec2b02fa30eef0559266e7aad7fde15"
 SOURCE_SHA256_MENU="1d77871d05af7b526548ea72ae129045725578c047d893a0294ba78790b27227"
 SOURCE_SHA256_SS2022="846a7ff307470e8b7abe63219c42e63dc6f0d240e7d7803fa7a9a11ccf4f14de"
-SOURCE_SHA256_BACKEND="ba94607cb549a1b2b11d99422b40956269dc7d1b3c1b4898e99df95fa0ce884e"
-SOURCE_SHA256_BUILD="388e092c620fb66ff2550e4e73aea45fd57c1a8d01ae47ff76f5ecd5f4689d45"
+SOURCE_SHA256_BACKEND="d517b9f7510c9d75c615b2dbdf24813ad3748aeef26a6b6ebad0a4f7e0ff4223"
+SOURCE_SHA256_BUILD="64e8943adad8540f8e7bd1dfe4ad5c4132fd6504a1613adda58660c92adbea29"
 SOURCE_SHA256_PATCH="9a9b9c6720429c0d3809eacd6b226ed167b49cdacd9392ae5d32acf3115d2792"
 RUN_MENU=1
 MODE=release
@@ -83,7 +83,7 @@ if [[ "$MODE" == release ]]; then
         release_asset="$RELEASE_ASSET_AMD64_GLIBC"
         release_sha="$RELEASE_SHA256_AMD64_GLIBC"
     fi
-    [[ "$release_sha" != "__RELEASE_SHA256_TBD__" && "$release_sha" != "__RELEASE_SHA256_MUSL_TBD__" ]] || {
+    [[ "$release_sha" != *_TBD_* ]] || {
         printf '%s\n' '[错误] 当前仓库的目标架构 Release 哈希尚未配置，请更新到正式发布提交。' >&2
         exit 1
     }
@@ -234,5 +234,11 @@ install_global_link menu.sh menu
 install_global_link ss-2022.sh ss-2022
 
 if ((RUN_MENU == 1)); then
-    exec "$INSTALL_DIR/menu.sh"
+    # curl | bash leaves stdin at EOF; reconnect the interactive menu to the
+    # controlling terminal so the user can actually select an option.
+    if [[ -r /dev/tty ]]; then
+        exec "$INSTALL_DIR/menu.sh" </dev/tty
+    else
+        exec "$INSTALL_DIR/menu.sh"
+    fi
 fi

@@ -41,14 +41,15 @@ readonly YELLOW='\033[1;33m'
 readonly CYAN='\033[0;36m'
 readonly RESET='\033[0m'
 
-# Keep this allow-list in lockstep with build-core.sh features.  A case
-# statement is used instead of evaluating user input as an array subscript.
+# Keep this allow-list in lockstep with build-core.sh features. Legacy AEAD
+# methods are included for ordinary Shadowsocks clients; stream ciphers stay disabled.
 ss_method_bytes() {
     case "$1" in
         2022-blake3-aes-128-gcm) printf '16\n' ;;
         2022-blake3-aes-256-gcm) printf '32\n' ;;
         2022-blake3-chacha20-poly1305) printf '32\n' ;;
         2022-blake3-chacha8-poly1305) printf '32\n' ;;
+        aes-128-gcm|aes-256-gcm|chacha20-ietf-poly1305) printf '0\n' ;;
         *) return 1 ;;
     esac
 }
@@ -345,6 +346,10 @@ validate_ss_password() {
     local method=$1 value=$2 expected tmp length
     expected=$(ss_method_bytes "$method") || die "不支持的 Shadowsocks method：$method"
     [[ -n "$value" && "$value" != *$'\r'* && "$value" != *$'\n'* ]] || die 'Shadowsocks 密码不能为空或含控制字符。'
+    if (( expected == 0 )); then
+        printf '%s\n' "$value"
+        return 0
+    fi
     [[ "$value" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || die 'Shadowsocks 2022 密码必须是标准 base64。'
     tmp=$(mktemp) || die '无法创建密码校验临时文件。'
     if ! printf '%s' "$value" | base64 -d >"$tmp" 2>/dev/null; then
@@ -359,6 +364,7 @@ validate_ss_password() {
 
 random_ss_password() {
     local bytes=$1
+    (( bytes > 0 )) || bytes=32
     head -c "$bytes" /dev/urandom | base64 | tr -d '\r\n' || die '无法生成随机 Shadowsocks 密码。'
     printf '\n'
 }
@@ -1120,9 +1126,9 @@ cmd_core_info() {
     else
         printf 'Xray 版本：未部署\n'
     fi
-    printf '预编译 Release：v0.1.0 amd64/glibc + amd64/musl\n'
-    printf 'glibc SHA-256：ea19d8faee337cfc4bdb78c9c0527dddb16f03d7760792b98a5124c56c92a48b\n'
-    printf 'musl SHA-256：93e2cab2d2eb643f014ec503939da2cfd16eed2941a4f7f6ddf983ffe277a458\n'
+    printf '预编译 Release：v0.1.1 amd64/glibc + amd64/musl\n'
+    printf 'glibc SHA-256：92a06dbf5951ddd85d05a750af302fd06b827a3b82b56269a4003e9a31b061f2\n'
+    printf 'musl SHA-256：40430c6f1db9a2752db4626fbc404319310382f5dec23799a2074909744a4b34\n'
 }
 
 cmd_logs() {

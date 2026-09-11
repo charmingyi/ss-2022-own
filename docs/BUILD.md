@@ -56,7 +56,7 @@ Shadowsocks 使用：
 ```bash
 cargo build --locked --release \
   --no-default-features \
-  --features 'server,logging,multi-threaded,aead-cipher-2022' \
+  --features 'server,logging,multi-threaded,aead-cipher,aead-cipher-2022' \
   --bin ssserver --target x86_64-unknown-linux-musl
 ```
 

@@ -11,7 +11,7 @@ curl --fail --proto '=https' --tlsv1.2 -fsSL \
   | SSOWN_REF=<已审计提交号> bash
 ```
 
-入口检测 `/etc/os-release` 的 `ID=alpine` 后选择 musl Release，并校验整个归档、内部 manifest 和两个核心的 SHA-256。当前 musl 归档 SHA-256 为 `20dc8536307cb5e825e50f279807d1820876960707a73db8ca29decdf4ee8ca8`。默认不执行 `apk add`，避免未经确认改变系统；上面的依赖命令由管理员显式执行。
+入口检测 `/etc/os-release` 的 `ID=alpine` 后选择 musl Release，并校验整个归档、内部 manifest 和两个核心的 SHA-256。当前 v0.1.1 musl 归档 SHA-256 为 `40430c6f1db9a2752db4626fbc404319310382f5dec23799a2074909744a4b34`。默认不执行 `apk add`，避免未经确认改变系统；上面的依赖命令由管理员显式执行。
 
 ## OpenRC 管理
 

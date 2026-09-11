@@ -234,7 +234,7 @@ build_ss() {
     if [[ "$LIBC" == musl ]]; then
         export RUSTFLAGS="${RUSTFLAGS} -C linker=${LINKER} -C target-feature=+crt-static -C relocation-model=static -C link-arg=-static"
     fi
-    cargo_args=(build --locked --release --no-default-features --features 'server,logging,multi-threaded,aead-cipher-2022' --bin ssserver --target "$RUST_TARGET")
+    cargo_args=(build --locked --release --no-default-features --features 'server,logging,multi-threaded,aead-cipher,aead-cipher-2022' --bin ssserver --target "$RUST_TARGET")
     ((OFFLINE == 1)) && cargo_args+=(--offline)
     cargo "${cargo_args[@]}"
     popd >/dev/null

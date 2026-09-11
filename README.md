@@ -47,7 +47,7 @@ curl --fail --proto '=https' --tlsv1.2 -fsSL \
   | SSOWN_REF=main bash
 ```
 
-入口会固定下载 Release `v0.1.0`，校验归档 SHA-256、归档内部 manifest 和核心哈希后才部署。glibc 归档 SHA-256 为 `ea19d8faee337cfc4bdb78c9c0527dddb16f03d7760792b98a5124c56c92a48b`，musl 归档 SHA-256 为 `93e2cab2d2eb643f014ec503939da2cfd16eed2941a4f7f6ddf983ffe277a458`。生产环境请将 `main` 换成已审计的完整提交号；当前 Release 暂未提供 ARM64 预编译包。
+入口会固定下载 Release `v0.1.1`，校验归档 SHA-256、归档内部 manifest 和核心哈希后才部署。glibc 归档 SHA-256 为 `92a06dbf5951ddd85d05a750af302fd06b827a3b82b56269a4003e9a31b061f2`，musl 归档 SHA-256 为 `40430c6f1db9a2752db4626fbc404319310382f5dec23799a2074909744a4b34`。生产环境请将 `main` 换成已审计的完整提交号；当前 Release 暂未提供 ARM64 预编译包。
 
 ## 构建核心（备用）
 
@@ -96,12 +96,17 @@ sudo ./ssctl.sh install ss \
   --open-firewall
 ```
 
-脚本会随机生成符合 AEAD-2022 密钥长度要求的标准 Base64 密码。当前自有构建只启用以下四种 AEAD-2022 方法：
+脚本会随机生成符合 AEAD-2022 密钥长度要求的标准 Base64 密码。当前自有构建支持以下 AEAD-2022 方法，并额外保留普通 Shadowsocks 客户端常用的 legacy AEAD：
 
 - `2022-blake3-aes-128-gcm`
 - `2022-blake3-aes-256-gcm`
 - `2022-blake3-chacha20-poly1305`
 - `2022-blake3-chacha8-poly1305`
+- `aes-128-gcm`
+- `aes-256-gcm`
+- `chacha20-ietf-poly1305`
+
+不编译已废弃的 stream cipher；legacy 密码不强制要求 2022 的固定 Base64 密钥长度。
 
 ### VLESS + REALITY + XTLS Vision
 
