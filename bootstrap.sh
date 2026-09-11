@@ -10,7 +10,7 @@ REF=${SSOWN_REF:-main}
 INSTALL_DIR=${SSOWN_SOURCE_DIR:-/usr/local/share/ss-2022-own}
 RELEASE_TAG="v0.1.0"
 RELEASE_ASSET_AMD64_GLIBC="ss-2022-own-linux-amd64-glibc.tar.gz"
-# Filled from package-release.sh before the release is published.
+# SHA-256 of the v0.1.0 amd64/glibc archive published by this repository.
 RELEASE_SHA256_AMD64_GLIBC="6ee27771389b8bafc31329671ff0bd705fb47fd0cce33930ca211a077a9f5d21"
 RUN_MENU=1
 MODE=release

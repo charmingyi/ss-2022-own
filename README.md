@@ -167,13 +167,13 @@ sudo ./ssctl.sh remove xray --yes
 
 ## 一键入口
 
-公开仓库的一键入口如下；生产环境建议把 `main` 替换成已审计的完整提交号：
+公开仓库的一键入口默认安装预编译核心；生产环境建议把 `main` 替换成已审计的完整提交号：
 
 ```bash
 curl --fail --proto '=https' --tlsv1.2 -fsSL \
   https://raw.githubusercontent.com/charmingyi/ss-2022-own/main/bootstrap.sh \
   | SSOWN_REPO_URL=https://github.com/charmingyi/ss-2022-own.git \
-    SSOWN_REF=main bash -- --build
+    SSOWN_REF=main bash
 ```
 
 固定提交号的形式：
@@ -182,10 +182,10 @@ curl --fail --proto '=https' --tlsv1.2 -fsSL \
 curl --fail --proto '=https' --tlsv1.2 -fsSL \
   https://raw.githubusercontent.com/charmingyi/ss-2022-own/<commit>/bootstrap.sh \
   | SSOWN_REPO_URL=https://github.com/charmingyi/ss-2022-own.git \
-    SSOWN_REF=<commit> bash -- --build
+    SSOWN_REF=<commit> bash
 ```
 
-入口脚本只从指定仓库固定引用取 `ssctl.sh`、`lib/ssctl.py`、`build-core.sh`，不会把后续下载内容直接交给 shell。生产环境最好先下载脚本、核对提交/哈希后再执行；本项目不会强迫用户盲信一条 root 管道命令。
+入口脚本只从指定仓库固定引用取管理脚本、构建脚本和固定补丁，不会把后续下载内容直接交给 shell。生产环境最好先下载脚本、核对提交/哈希后再执行；本项目不会强迫用户盲信一条 root 管道命令。
 
 如果目标机器没有预构建 release 产物，先在受控构建机运行 `build-core.sh`，把产物通过你们自己的发布流程部署；不要在服务器上启用动态 latest 下载。
 
