@@ -1285,10 +1285,48 @@ menu_pause() {
     read -r -p '按回车返回上一级...' _ || true
 }
 
+print_ss_methods() {
+    printf '%b\n' "${CYAN}可选 Shadowsocks 加密方式：${RESET}"
+    printf '%s\n' \
+        ' 1) 2022-blake3-aes-128-gcm' \
+        ' 2) 2022-blake3-aes-256-gcm（推荐）' \
+        ' 3) 2022-blake3-chacha20-poly1305' \
+        ' 4) 2022-blake3-chacha8-poly1305' \
+        ' 5) aes-128-gcm（普通 SS）' \
+        ' 6) aes-256-gcm（普通 SS）' \
+        ' 7) chacha20-ietf-poly1305（普通 SS）'
+    printf '%s\n' '可输入编号，也可直接输入方法名。'
+}
+
+select_ss_method() {
+    local choice
+    while true; do
+        choice=$(prompt_menu '请选择加密方式' 2)
+        case "$choice" in
+            1) printf '%s\n' 2022-blake3-aes-128-gcm; return 0 ;;
+            2) printf '%s\n' 2022-blake3-aes-256-gcm; return 0 ;;
+            3) printf '%s\n' 2022-blake3-chacha20-poly1305; return 0 ;;
+            4) printf '%s\n' 2022-blake3-chacha8-poly1305; return 0 ;;
+            5) printf '%s\n' aes-128-gcm; return 0 ;;
+            6) printf '%s\n' aes-256-gcm; return 0 ;;
+            7) printf '%s\n' chacha20-ietf-poly1305; return 0 ;;
+            *)
+                if ss_method_bytes "$choice" >/dev/null 2>&1; then
+                    printf '%s\n' "$choice"
+                    return 0
+                fi
+                warn_msg '无效加密方式，请按列表输入编号或方法名。'
+                print_ss_methods >&2
+                ;;
+        esac
+    done
+}
+
 menu_install_one() {
     local kind=$1 value method password auth appearance
     if [[ "$kind" == ss ]]; then
-        method=$(prompt_menu '加密方式' 2022-blake3-aes-256-gcm)
+        print_ss_methods
+        method=$(select_ss_method)
         password=$(prompt_secret_menu '密码（留空随机生成）')
         cmd_install_ss --method "$method" --port "$(prompt_menu 端口 8388)" --listen "$(prompt_menu 监听地址 0.0.0.0)" \
             --server-address "$(prompt_menu 服务器地址 '<server-address>')" --tag "$(prompt_menu 节点 tag ss2022)" \
