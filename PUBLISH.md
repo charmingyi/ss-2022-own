@@ -9,8 +9,8 @@
 3. 确认 `.gitignore` 没有失效，尤其不能提交 `dist/`、`.build/`、状态文件、客户端配置和任何私钥/密码。
 4. 公开仓库只包含管理层源码、构建脚本、README、NOTICE、SECURITY、补丁和测试；不要把服务器实例配置放进仓库。
 5. 一键入口应固定到已审计的完整提交号，而不是长期依赖 `main`。
-6. 在受控构建机生成每个架构的二进制、manifest、SBOM 和签名；发布页只上传经过审计的产物。
-7. 用干净的 Debian 12 和 Alpine/musl 环境做 smoke test，再公开 release 下载地址。
+6. 在受控构建机生成每个架构的二进制、manifest、SBOM 和签名；发布页只上传经过审计的产物。当前 `v0.1.0` 提供 amd64/glibc 预编译归档。
+7. 用干净的 Debian 12 和 Alpine/musl 环境做 smoke test，再公开 release 下载地址；更新 `bootstrap.sh` 中的 Release 哈希后才切换默认版本。
 
 ## 登录/推送安全
 

@@ -11,3 +11,4 @@ clients/
 backup/
 *.orig
 *.rej
+release/

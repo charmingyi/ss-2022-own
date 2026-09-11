@@ -1,7 +1,7 @@
-.PHONY: test syntax build build-ss build-xray
+.PHONY: test syntax build build-ss build-xray package-release
 
 syntax:
-	bash -n ssctl.sh bootstrap.sh build-core.sh tests/test_manager.sh
+	bash -n ssctl.sh bootstrap.sh build-core.sh package-release.sh tests/test_manager.sh
 	python3 -m py_compile lib/ssctl.py
 
 test: syntax
@@ -15,3 +15,6 @@ build-ss:
 
 build-xray:
 	./build-core.sh --core xray --arch native --libc glibc
+
+package-release:
+	./package-release.sh
