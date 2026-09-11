@@ -164,6 +164,8 @@ def timestamp() -> str:
 
 
 def backup(path: Path) -> None:
+    if path.is_symlink():
+        die(f"拒绝备份符号链接：{path}")
     if not path.exists():
         return
     ensure_dir(BACKUP_DIR, 0o700)
@@ -379,8 +381,10 @@ def valid_appearance(value: str) -> str:
 
 def valid_ttl(value: str) -> str:
     value = (value or "").strip().lower()
+    if value == "0s":
+        return value
     if not re.fullmatch(r"[1-9][0-9]*(?:-[1-9][0-9]*)?s", value):
-        die("ticket-ttl 示例：600s 或 300-600s。")
+        die("ticket-ttl 示例：600s、300-600s 或 0s（仅 1-RTT）。")
     if "-" in value:
         lower, upper = value[:-1].split("-", 1)
         if int(lower) > int(upper):
