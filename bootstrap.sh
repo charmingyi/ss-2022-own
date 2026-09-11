@@ -72,7 +72,7 @@ if [[ "$REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
     }
 fi
 
-for required in ssctl.sh lib/ssctl.py build-core.sh; do
+for required in ssctl.sh lib/ssctl.py build-core.sh patches/shadowsocks-rust-build-time.patch; do
     [[ -f "$TMP_DIR/$required" && ! -L "$TMP_DIR/$required" ]] || {
         printf '[错误] 仓库缺少或拒绝符号链接：%s\n' "$required" >&2
         exit 1
@@ -88,8 +88,10 @@ install -d -m 0755 "$INSTALL_DIR"
 # Copy only reviewed regular files; no remote file is executed before this check.
 install -m 0755 "$TMP_DIR/ssctl.sh" "$INSTALL_DIR/ssctl.sh"
 install -m 0755 "$TMP_DIR/build-core.sh" "$INSTALL_DIR/build-core.sh"
-install -d -m 0755 "$INSTALL_DIR/lib"
+install -d -m 0755 "$INSTALL_DIR/lib" "$INSTALL_DIR/patches"
 install -m 0644 "$TMP_DIR/lib/ssctl.py" "$INSTALL_DIR/lib/ssctl.py"
+install -m 0644 "$TMP_DIR/patches/shadowsocks-rust-build-time.patch" \
+    "$INSTALL_DIR/patches/shadowsocks-rust-build-time.patch"
 
 printf '[bootstrap] 已安装到：%s\n' "$INSTALL_DIR"
 if ((BUILD == 1)); then
