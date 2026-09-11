@@ -395,6 +395,31 @@ require_binary() {
     printf '%s\n' "$path"
 }
 
+detect_server_address() {
+    local address
+    if have ip; then
+        address=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}' || true)
+        case "$address" in
+            ''|127.*|0.*) ;;
+            *) printf '%s\n' "$address"; return 0 ;;
+        esac
+        address=$(ip -6 route get 2606:4700:4700::1111 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}' || true)
+        case "$address" in
+            ''|::1|fe80:*) ;;
+            *) printf '%s\n' "$address"; return 0 ;;
+        esac
+    fi
+    if have hostname; then
+        while IFS= read -r address; do
+            case "$address" in
+                ''|127.*|0.*|::1|fe80:*) continue ;;
+                *) printf '%s\n' "$address"; return 0 ;;
+            esac
+        done < <(hostname -I 2>/dev/null | tr ' ' '\n')
+    fi
+    printf '%s\n' '<server-address>'
+}
+
 xray_key_pair() {
     local private=${1:-} public=${2:-} output parsed_private parsed_public
     [[ -z "$public" || -n "$private" ]] || die '只提供 public-key 无法恢复私钥。'
@@ -873,6 +898,7 @@ cmd_install_ss() {
         esac
     done
     method_bytes=$(ss_method_bytes "$method") || die "不支持的 Shadowsocks method：$method"
+    [[ "$server_address" != '<server-address>' ]] || server_address=$(detect_server_address)
     port=$(parse_port "$port")
     listen=$(parse_listen "$listen")
     server_address=$(parse_server_address "$server_address")
@@ -923,6 +949,7 @@ cmd_install_reality() {
             *) die "install reality 未知参数：$1" ;;
         esac
     done
+    [[ "$server_address" != '<server-address>' ]] || server_address=$(detect_server_address)
     port=$(parse_port "$port")
     listen=$(parse_listen "$listen")
     server_address=$(parse_server_address "$server_address")
@@ -985,6 +1012,7 @@ cmd_install_encryption() {
             *) die "install encryption 未知参数：$1" ;;
         esac
     done
+    [[ "$server_address" != '<server-address>' ]] || server_address=$(detect_server_address)
     port=$(parse_port "$port")
     listen=$(parse_listen "$listen")
     server_address=$(parse_server_address "$server_address")
@@ -1280,6 +1308,14 @@ prompt_secret_menu() {
     printf '%s\n' "$value"
 }
 
+menu_server_address() {
+    local detected
+    detected=$(detect_server_address)
+    printf '%b\n' "${CYAN}自动检测本机服务器地址：${detected}${RESET}" >&2
+    printf '%s\n' '若服务器在 NAT 后，请在下一步改填公网 IP/域名。' >&2
+    prompt_menu '服务器地址（回车使用检测值）' "$detected"
+}
+
 menu_pause() {
     [[ -t 0 ]] || return 0
     read -r -p '按回车返回上一级...' _ || true
@@ -1324,16 +1360,23 @@ select_ss_method() {
 
 menu_install_one() {
     local kind=$1 value method password auth appearance
+    local -a install_args
     if [[ "$kind" == ss ]]; then
         print_ss_methods
         method=$(select_ss_method)
         password=$(prompt_secret_menu '密码（留空随机生成）')
-        cmd_install_ss --method "$method" --port "$(prompt_menu 端口 8388)" --listen "$(prompt_menu 监听地址 0.0.0.0)" \
-            --server-address "$(prompt_menu 服务器地址 '<server-address>')" --tag "$(prompt_menu 节点 tag ss2022)" \
-            ${password:+--password "$password"}
+        install_args=(
+            --method "$method"
+            --port "$(prompt_menu 端口 8388)"
+            --listen "$(prompt_menu 监听地址 0.0.0.0)"
+            --server-address "$(menu_server_address)"
+            --tag "$(prompt_menu 节点 tag ss2022)"
+        )
+        [[ -n "$password" ]] && install_args+=(--password "$password")
+        cmd_install_ss "${install_args[@]}"
     elif [[ "$kind" == reality ]]; then
         cmd_install_reality --port "$(prompt_menu 端口 443)" --listen "$(prompt_menu 监听地址 0.0.0.0)" \
-            --server-address "$(prompt_menu 服务器地址 '<server-address>')" --tag "$(prompt_menu 节点 tag vless-reality)" \
+            --server-address "$(menu_server_address)" --tag "$(prompt_menu 节点 tag vless-reality)" \
             --target "$(prompt_menu 伪装目标 www.example.com:443)" --server-name "$(prompt_menu 允许的 SNI www.example.com)" \
             --uuid "$(prompt_menu UUID（留空随机生成）)" --fingerprint "$(prompt_menu 指纹 chrome)" \
             --short-id "$(prompt_menu short ID（留空随机生成）)" --spider-x "$(prompt_menu spiderX /)"
@@ -1341,7 +1384,7 @@ menu_install_one() {
         auth=$(prompt_menu '认证方式（x25519/mlkem768）' x25519)
         appearance=$(prompt_menu '外观（native/xorpub/random）' native)
         cmd_install_encryption --port "$(prompt_menu 端口 8443)" --listen "$(prompt_menu 监听地址 0.0.0.0)" \
-            --server-address "$(prompt_menu 服务器地址 '<server-address>')" --tag "$(prompt_menu 节点 tag vless-encryption)" \
+            --server-address "$(menu_server_address)" --tag "$(prompt_menu 节点 tag vless-encryption)" \
             --auth "$auth" --appearance "$appearance" --ticket-ttl "$(prompt_menu ticket TTL 600s)" \
             --uuid "$(prompt_menu UUID（留空随机生成）)"
     fi
