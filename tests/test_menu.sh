@@ -26,5 +26,7 @@ done
 
 nested=$(printf '4\n0\n0\n' | "$PROJECT_DIR/ssctl.sh" menu)
 grep -Fq '=== 节点管理 ===' <<<"$nested"
+section=$(printf '0\n' | "$PROJECT_DIR/ssctl.sh" menu --section nodes)
+grep -Fq '=== 节点管理 ===' <<<"$section"
 
 printf '%s\n' 'menu tests: OK'

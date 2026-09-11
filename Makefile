@@ -1,7 +1,7 @@
 .PHONY: test syntax build build-ss build-xray package-release
 
 syntax:
-	bash -n ssctl.sh bootstrap.sh build-core.sh package-release.sh tests/test_manager.sh tests/test_menu.sh
+	bash -n ssctl.sh bootstrap.sh menu.sh ss-2022.sh build-core.sh package-release.sh tests/test_manager.sh tests/test_menu.sh
 	python3 -m py_compile lib/ssctl.py
 
 test: syntax

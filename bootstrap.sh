@@ -101,7 +101,7 @@ if [[ "$REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
     }
 fi
 
-for required in ssctl.sh lib/ssctl.py build-core.sh patches/shadowsocks-rust-build-time.patch; do
+for required in ssctl.sh menu.sh ss-2022.sh lib/ssctl.py build-core.sh patches/shadowsocks-rust-build-time.patch; do
     [[ -f "$TMP_DIR/$required" && ! -L "$TMP_DIR/$required" ]] || {
         printf '[错误] 仓库缺少或拒绝符号链接：%s\n' "$required" >&2
         exit 1
@@ -116,6 +116,8 @@ fi
 install -d -m 0755 "$INSTALL_DIR"
 # Copy only reviewed regular files; no remote file is executed before this check.
 install -m 0755 "$TMP_DIR/ssctl.sh" "$INSTALL_DIR/ssctl.sh"
+install -m 0755 "$TMP_DIR/menu.sh" "$INSTALL_DIR/menu.sh"
+install -m 0755 "$TMP_DIR/ss-2022.sh" "$INSTALL_DIR/ss-2022.sh"
 install -m 0755 "$TMP_DIR/build-core.sh" "$INSTALL_DIR/build-core.sh"
 install -d -m 0755 "$INSTALL_DIR/lib" "$INSTALL_DIR/patches"
 install -m 0644 "$TMP_DIR/lib/ssctl.py" "$INSTALL_DIR/lib/ssctl.py"
@@ -212,5 +214,5 @@ else
 fi
 
 if ((RUN_MENU == 1)); then
-    exec "$INSTALL_DIR/ssctl.sh" menu
+    exec "$INSTALL_DIR/menu.sh"
 fi

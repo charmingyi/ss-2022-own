@@ -1857,8 +1857,26 @@ def prompt_install(kind: str) -> None:
     pause()
 
 
-def menu(_: argparse.Namespace) -> None:
+def menu(args: argparse.Namespace) -> None:
     require_root()
+    section = getattr(args, "section", "all")
+    if section != "all":
+        handlers = {
+            "ss": lambda: prompt_install("ss"),
+            "reality": lambda: prompt_install("reality"),
+            "encryption": lambda: prompt_install("encryption"),
+            "nodes": node_menu,
+            "services": service_menu,
+            "config": config_menu,
+            "logs": lambda: logs(argparse.Namespace(kind="all", lines=50)),
+            "firewall": firewall_menu,
+            "core": core_menu,
+            "remove": uninstall_menu,
+        }
+        if section not in handlers:
+            die(f"未知菜单分区：{section}")
+        handlers[section]()
+        return
     while True:
         clear_screen()
         print(f"{ANSI_GREEN}============================================{ANSI_RESET}")
@@ -2020,6 +2038,12 @@ def build_parser() -> argparse.ArgumentParser:
         fw.set_defaults(handler=firewall_open if action == "open" else firewall_close)
 
     menu_parser = sub.add_parser("menu", help="交互式菜单")
+    menu_parser.add_argument(
+        "--section",
+        choices=["all", "ss", "reality", "encryption", "nodes", "services", "config", "logs", "firewall", "core", "remove"],
+        default="all",
+        help="从主菜单的指定分区开始",
+    )
     menu_parser.set_defaults(handler=menu)
     return parser
 
