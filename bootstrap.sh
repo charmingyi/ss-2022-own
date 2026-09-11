@@ -1,19 +1,28 @@
 #!/usr/bin/env bash
-# One-click entry point for a pinned repository checkout.
+# One-click entry point for a pinned raw-file checkout (no git required).
 # It never pipes a fetched third-party body to a shell and never runs a third-party script.
 set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-REPO_URL=${SSOWN_REPO_URL:-https://github.com/charmingyi/ss-2022-own.git}
 REF=${SSOWN_REF:-main}
 INSTALL_DIR=${SSOWN_SOURCE_DIR:-/usr/local/share/ss-2022-own}
+RAW_BASE=${SSOWN_RAW_BASE:-https://raw.githubusercontent.com/charmingyi/ss-2022-own/${REF}}
 RELEASE_TAG="v0.1.0"
 RELEASE_ASSET_AMD64_GLIBC="ss-2022-own-linux-amd64-glibc.tar.gz"
 RELEASE_ASSET_AMD64_MUSL="ss-2022-own-linux-amd64-musl.tar.gz"
 # SHA-256 values of the immutable v0.1.0 archives published by this repository.
 RELEASE_SHA256_AMD64_GLIBC="6ee27771389b8bafc31329671ff0bd705fb47fd0cce33930ca211a077a9f5d21"
 RELEASE_SHA256_AMD64_MUSL="20dc8536307cb5e825e50f279807d1820876960707a73db8ca29decdf4ee8ca8"
+
+# Hashes of the small, reviewed manager surface fetched from this exact REF.
+# The binary Release is checked separately above and never comes from main.
+SOURCE_SHA256_SSCTL="507d2a924f36a22f66d85a97dc52c3d4eb3f0ff1572b126d5a166dbb0d87b9ff"
+SOURCE_SHA256_MENU="5a69d980b30235a483d11af5c0de918d1bbdd8c92a9c43cdef984de636355ca9"
+SOURCE_SHA256_SS2022="23db0a29c71235ba9d44f45303ff506c325aed0c40cb1c3c8deb7d67d1ed94ea"
+SOURCE_SHA256_PY="896ee400603ddf892488dce7d0c2502c0f5a9c48a7066ab1acd4937c69714711"
+SOURCE_SHA256_BUILD="8d84dd0207b84bce833333589287618ca271ee5a0df90007e76811f8874572da"
+SOURCE_SHA256_PATCH="9a9b9c6720429c0d3809eacd6b226ed167b49cdacd9392ae5d32acf3115d2792"
 RUN_MENU=1
 MODE=release
 
@@ -28,8 +37,8 @@ usage() {
   --no-menu                安装/部署后退出，不进入交互菜单
 
 环境变量：
-  SSOWN_REPO_URL     GitHub 仓库 URL（默认 https://github.com/charmingyi/ss-2022-own.git）
   SSOWN_REF          分支、tag 或 40 位提交号；生产环境建议使用 40 位提交号
+  SSOWN_RAW_BASE     受控镜像的 raw 基地址（默认本项目 GitHub raw 地址）
   SSOWN_SOURCE_DIR   本地安装目录（默认 /usr/local/share/ss-2022-own）
   SSOWN_BUILD_LIBC   --build 时选择 glibc 或 musl（默认按系统：Alpine=musl）
 
@@ -47,8 +56,8 @@ while (($#)); do
     esac
 done
 
-[[ "$REPO_URL" == https://github.com/* ]] || {
-    printf '%s\n' '[错误] 只接受 https://github.com/ 下的仓库地址。' >&2
+[[ "$RAW_BASE" == https://raw.githubusercontent.com/charmingyi/ss-2022-own/* ]] || {
+    printf '%s\n' '[错误] 只接受本项目 GitHub raw 基地址。' >&2
     exit 1
 }
 if [[ "$REF" == *..* || "$REF" == /* || "$REF" == */ || "$REF" == *//* ]]; then
@@ -67,9 +76,6 @@ if grep -Eq '^ID=alpine$|^ID_LIKE=.*alpine' /etc/os-release 2>/dev/null; then
     runtime_libc=musl
 fi
 if [[ "$MODE" == release ]]; then
-    for command in curl sha256sum; do
-        command -v "$command" >/dev/null 2>&1 || { printf '[错误] 预编译安装需要 %s。\n' "$command" >&2; exit 1; }
-    done
     if [[ "$runtime_libc" == musl ]]; then
         release_asset="$RELEASE_ASSET_AMD64_MUSL"
         release_sha="$RELEASE_SHA256_AMD64_MUSL"
@@ -83,46 +89,52 @@ if [[ "$MODE" == release ]]; then
     }
 fi
 
-TMP_DIR=$(mktemp -d -t ssown-bootstrap.XXXXXX)
-cleanup() { rm -rf -- "$TMP_DIR"; }
-trap cleanup EXIT
-
-printf '[bootstrap] 获取固定仓库引用：%s\n' "$REF"
-git -C "$TMP_DIR" init --quiet
-git -C "$TMP_DIR" remote add origin "$REPO_URL"
-git -C "$TMP_DIR" fetch --quiet --depth 1 origin "$REF"
-git -C "$TMP_DIR" checkout --quiet --detach FETCH_HEAD
-
-if [[ "$REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
-    actual=$(git -C "$TMP_DIR" rev-parse HEAD)
-    [[ "$actual" == "$REF" ]] || {
-        printf '[错误] 远端返回提交 %s，而不是要求的 %s。\n' "$actual" "$REF" >&2
-        exit 1
-    }
-fi
-
-for required in ssctl.sh menu.sh ss-2022.sh lib/ssctl.py build-core.sh patches/shadowsocks-rust-build-time.patch; do
-    [[ -f "$TMP_DIR/$required" && ! -L "$TMP_DIR/$required" ]] || {
-        printf '[错误] 仓库缺少或拒绝符号链接：%s\n' "$required" >&2
-        exit 1
-    }
+for command in curl sha256sum python3; do
+    command -v "$command" >/dev/null 2>&1 || { printf '[错误] 预编译/管理器安装需要 %s。\n' "$command" >&2; exit 1; }
 done
-
 if [[ "$(id -u)" -ne 0 ]]; then
     printf '%s\n' '[错误] 安装到 /usr/local/share 需要 root。' >&2
     exit 1
 fi
 
+TMP_DIR=$(mktemp -d -t ssown-bootstrap.XXXXXX)
+cleanup() { rm -rf -- "$TMP_DIR"; }
+trap cleanup EXIT
+
+fetch_checked_file() {
+    local relative=$1 expected=$2 safe_name
+    safe_name=${relative//\//__}
+    FETCHED_FILE="$TMP_DIR/$safe_name"
+    printf '[bootstrap] 获取并校验管理文件：%s\n' "$relative"
+    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+        --retry 3 --connect-timeout 15 --max-time 300 \
+        "$RAW_BASE/$relative" -o "$FETCHED_FILE"
+    printf '%s  %s\n' "$expected" "$FETCHED_FILE" | sha256sum -c - >&2
+    [[ -s "$FETCHED_FILE" ]] || { printf '[错误] 下载文件为空：%s\n' "$relative" >&2; exit 1; }
+}
+
+fetch_checked_file ssctl.sh "$SOURCE_SHA256_SSCTL"
+ssctl_file="$FETCHED_FILE"
+fetch_checked_file menu.sh "$SOURCE_SHA256_MENU"
+menu_file="$FETCHED_FILE"
+fetch_checked_file ss-2022.sh "$SOURCE_SHA256_SS2022"
+ss2022_file="$FETCHED_FILE"
+fetch_checked_file lib/ssctl.py "$SOURCE_SHA256_PY"
+python_file="$FETCHED_FILE"
+fetch_checked_file build-core.sh "$SOURCE_SHA256_BUILD"
+build_file="$FETCHED_FILE"
+fetch_checked_file patches/shadowsocks-rust-build-time.patch "$SOURCE_SHA256_PATCH"
+patch_file="$FETCHED_FILE"
+
 install -d -m 0755 "$INSTALL_DIR"
-# Copy only reviewed regular files; no remote file is executed before this check.
-install -m 0755 "$TMP_DIR/ssctl.sh" "$INSTALL_DIR/ssctl.sh"
-install -m 0755 "$TMP_DIR/menu.sh" "$INSTALL_DIR/menu.sh"
-install -m 0755 "$TMP_DIR/ss-2022.sh" "$INSTALL_DIR/ss-2022.sh"
-install -m 0755 "$TMP_DIR/build-core.sh" "$INSTALL_DIR/build-core.sh"
+# Copy only verified regular files; no remote file is executed before hashes pass.
+install -m 0755 "$ssctl_file" "$INSTALL_DIR/ssctl.sh"
+install -m 0755 "$menu_file" "$INSTALL_DIR/menu.sh"
+install -m 0755 "$ss2022_file" "$INSTALL_DIR/ss-2022.sh"
+install -m 0755 "$build_file" "$INSTALL_DIR/build-core.sh"
 install -d -m 0755 "$INSTALL_DIR/lib" "$INSTALL_DIR/patches"
-install -m 0644 "$TMP_DIR/lib/ssctl.py" "$INSTALL_DIR/lib/ssctl.py"
-install -m 0644 "$TMP_DIR/patches/shadowsocks-rust-build-time.patch" \
-    "$INSTALL_DIR/patches/shadowsocks-rust-build-time.patch"
+install -m 0644 "$python_file" "$INSTALL_DIR/lib/ssctl.py"
+install -m 0644 "$patch_file" "$INSTALL_DIR/patches/shadowsocks-rust-build-time.patch"
 
 if [[ "$MODE" == release ]]; then
     release_arch=$(uname -m)

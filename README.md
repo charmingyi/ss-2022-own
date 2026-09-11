@@ -39,7 +39,7 @@ Xray v25.9.11 已包含 [VLESS Encryption PR #5067](https://github.com/XTLS/Xray
 
 ## 预编译一键安装
 
-当前公开 Release 提供 Linux amd64/glibc 与 amd64/musl 预编译核心，安装服务器不需要 Go 或 Rust：Debian/Ubuntu 选择 glibc，Alpine 会自动选择 musl。
+当前公开 Release 提供 Linux amd64/glibc 与 amd64/musl 预编译核心，安装服务器不需要 Go、Rust 或 Git：Debian/Ubuntu 选择 glibc，Alpine 会自动选择 musl。只需 Bash、curl、Python3 和 sha256sum。
 
 ```bash
 curl --fail --proto '=https' --tlsv1.2 -fsSL \
@@ -201,10 +201,8 @@ bash <(curl --fail --proto '=https' --tlsv1.2 -fsSL \
 固定提交号的形式：
 
 ```bash
-curl --fail --proto '=https' --tlsv1.2 -fsSL \
-  https://raw.githubusercontent.com/charmingyi/ss-2022-own/<commit>/bootstrap.sh \
-  | SSOWN_REPO_URL=https://github.com/charmingyi/ss-2022-own.git \
-    SSOWN_REF=<commit> bash
+SSOWN_REF=<commit> bash <(curl --fail --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/charmingyi/ss-2022-own/<commit>/bootstrap.sh)
 ```
 
 入口脚本只从指定仓库固定引用取菜单、管理脚本、构建脚本和固定补丁，不会把后续下载内容直接交给 shell。生产环境最好先下载脚本、核对提交/哈希后再执行；本项目不会强迫用户盲信一条 root 管道命令。
