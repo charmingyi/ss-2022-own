@@ -5,7 +5,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-REPO_URL=${SSOWN_REPO_URL:-https://github.com/CHANGE_ME/ss-2022-own.git}
+REPO_URL=${SSOWN_REPO_URL:-https://github.com/charmingyi/ss-2022-own.git}
 REF=${SSOWN_REF:-main}
 INSTALL_DIR=${SSOWN_SOURCE_DIR:-/usr/local/share/ss-2022-own}
 RUN_MENU=1
@@ -17,7 +17,7 @@ usage() {
   bootstrap.sh [--no-menu] [--build]
 
 环境变量：
-  SSOWN_REPO_URL     发布后的 GitHub 仓库 URL（默认值需要替换）
+  SSOWN_REPO_URL     GitHub 仓库 URL（默认 https://github.com/charmingyi/ss-2022-own.git）
   SSOWN_REF          分支、tag 或 40 位提交号；生产环境建议使用 40 位提交号
   SSOWN_SOURCE_DIR   本地安装目录（默认 /usr/local/share/ss-2022-own）
   SSOWN_BUILD_LIBC   --build 时选择 glibc 或 musl（默认 glibc）

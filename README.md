@@ -3,7 +3,7 @@
 一个**本地可审计**的 Shadowsocks 2022 / VLESS Reality / VLESS Encryption 管理器。
 本项目不是把上游脚本换个名字，而是重新实现管理层，并从固定版本源码构建核心。
 
-> 当前仓库尚未绑定 GitHub 远程地址；`bootstrap.sh` 里的 `CHANGE_ME` 会在公开发布前替换。
+> 公开仓库地址：<https://github.com/charmingyi/ss-2022-own>。默认一键入口指向该仓库；生产环境仍建议固定到完整提交号。
 
 ## 为什么重写
 
@@ -149,13 +149,22 @@ sudo ./ssctl.sh remove xray --yes
 
 ## 一键入口
 
-公开仓库准备好后，建议使用**固定提交号**而不是 `main`：
+公开仓库的一键入口如下；生产环境建议把 `main` 替换成已审计的完整提交号：
 
 ```bash
 curl --fail --proto '=https' --tlsv1.2 -fsSL \
-  https://raw.githubusercontent.com/<owner>/<repo>/<commit>/bootstrap.sh \
-  | SSOWN_REPO_URL=https://github.com/<owner>/<repo>.git \
-    SSOWN_REF=<commit> bash -- --no-menu
+  https://raw.githubusercontent.com/charmingyi/ss-2022-own/main/bootstrap.sh \
+  | SSOWN_REPO_URL=https://github.com/charmingyi/ss-2022-own.git \
+    SSOWN_REF=main bash -- --build
+```
+
+固定提交号的形式：
+
+```bash
+curl --fail --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/charmingyi/ss-2022-own/<commit>/bootstrap.sh \
+  | SSOWN_REPO_URL=https://github.com/charmingyi/ss-2022-own.git \
+    SSOWN_REF=<commit> bash -- --build
 ```
 
 入口脚本只从指定仓库固定引用取 `ssctl.sh`、`lib/ssctl.py`、`build-core.sh`，不会把后续下载内容直接交给 shell。生产环境最好先下载脚本、核对提交/哈希后再执行；本项目不会强迫用户盲信一条 root 管道命令。
