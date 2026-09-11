@@ -5,7 +5,13 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+SOURCE=${BASH_SOURCE[0]}
+while [[ -L "$SOURCE" ]]; do
+    SOURCE_DIR=$(CDPATH= cd -- "$(dirname -- "$SOURCE")" && pwd)
+    SOURCE=$(readlink -- "$SOURCE")
+    [[ "$SOURCE" = /* ]] || SOURCE="$SOURCE_DIR/$SOURCE"
+done
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SOURCE")" && pwd)
 REMOTE_REF=${SSOWN_REF:-main}
 [[ "$REMOTE_REF" =~ ^[A-Za-z0-9._/-]+$|^[0-9a-fA-F]{40}$ ]] || {
     printf '%s\n' '[错误] SSOWN_REF 含有不允许的字符。' >&2

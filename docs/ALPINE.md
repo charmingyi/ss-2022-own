@@ -15,7 +15,7 @@ curl --fail --proto '=https' --tlsv1.2 -fsSL \
 
 ## OpenRC 管理
 
-管理器会在检测到 `rc-service`、`rc-update` 和 `/sbin/openrc-run` 时生成：
+安装器会安全地创建全局 `menu`/`ss-2022` 入口；管理器在检测到 `rc-service`、`rc-update` 和 `/sbin/openrc-run` 时生成：
 
 ```text
 /etc/init.d/ss-2022-own-ss

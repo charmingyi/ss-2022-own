@@ -167,7 +167,7 @@ sudo ./ssctl.sh remove xray --yes
 
 ## 交互菜单与管理
 
-直接运行 `sudo /usr/local/share/ss-2022-own/menu.sh`（或安装目录中的 `menu.sh`）即可进入彩色管理菜单；`ss-2022.sh` 是兼容上游单协议入口，外壳参考上游菜单但只调用本项目后端：
+直接运行 `sudo /usr/local/share/ss-2022-own/menu.sh`（安装器也会安全地创建全局 `menu`/`ss-2022` 命令）即可进入彩色管理菜单；`ss-2022.sh` 是兼容上游单协议入口，外壳参考上游菜单但只调用本项目后端：
 
 - 三种协议安装/覆盖：SS 2022、VLESS Reality、VLESS Encryption。
 - 节点查看、凭据隐藏/确认显示、按 tag 删除、配置验证。

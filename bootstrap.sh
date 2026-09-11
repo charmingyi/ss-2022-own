@@ -213,6 +213,22 @@ else
     printf '%s\n' '[bootstrap] 本地构建核心已部署。'
 fi
 
+install -d -m 0755 /usr/local/bin
+install_global_link() {
+    local target="$INSTALL_DIR/$1"
+    local link="/usr/local/bin/$2"
+    if [[ -L "$link" && "$(readlink -- "$link")" == "$target" ]]; then
+        return 0
+    fi
+    if [[ -e "$link" || -L "$link" ]]; then
+        printf '[警告] 已存在非本项目命令，保留不覆盖：%s\n' "$link" >&2
+        return 0
+    fi
+    ln -s -- "$target" "$link"
+}
+install_global_link menu.sh menu
+install_global_link ss-2022.sh ss-2022
+
 if ((RUN_MENU == 1)); then
     exec "$INSTALL_DIR/menu.sh"
 fi
