@@ -1,0 +1,13 @@
+.build/
+dist/
+__pycache__/
+*.py[cod]
+*.log
+.env
+*.key
+*.pem
+state.json
+clients/
+backup/
+*.orig
+*.rej

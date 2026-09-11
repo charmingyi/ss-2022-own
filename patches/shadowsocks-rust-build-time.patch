@@ -1,0 +1,5 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -17 +17 @@
+-pub const BUILD_TIME: &str = build_time::build_time_utc!();
++pub const BUILD_TIME: &str = env!("SSOWN_BUILD_TIME");
